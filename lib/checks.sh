@@ -39,26 +39,33 @@ check_root() {
 }
 
 # ---- 2. OS detection & support check ----
+# ---- 2. OS detection & support check ----
 check_supported_os() {
     echo "== Checking operating system =="
 
-    if [[ ! -f /etc/os-release ]]; then
-        _frosty_fail "/etc/os-release not found — cannot determine OS"
-        return 1
+    # Reuse values already parsed by install.sh's detect_system if available,
+    # otherwise parse safely with set -u disabled temporarily.
+    if [[ -z "${FROSTY_OS_ID:-}" || -z "${FROSTY_OS_VERSION:-}" ]]; then
+        if [[ ! -f /etc/os-release ]]; then
+            _frosty_fail "/etc/os-release not found — cannot determine OS"
+            return 1
+        fi
+        set +u
+        # shellcheck disable=SC1091
+        source /etc/os-release
+        set -u
+        FROSTY_OS_ID="${ID:-unknown}"
+        FROSTY_OS_VERSION="${VERSION_ID:-unknown}"
+        FROSTY_OS_PRETTY="${PRETTY_NAME:-$FROSTY_OS_ID $FROSTY_OS_VERSION}"
     fi
 
-    # shellcheck disable=SC1091
-    source /etc/os-release
-
-    FROSTY_OS_ID="${ID:-unknown}"
-    FROSTY_OS_VERSION="${VERSION_ID:-unknown}"
     local key="${FROSTY_OS_ID}:${FROSTY_OS_VERSION}"
 
-    if [[ -n "${FROSTY_SUPPORTED_OS[$key]:-}" ]]; then
-        _frosty_ok "Detected supported OS: ${PRETTY_NAME:-$key}"
+    if [[ -n "${FROSTY_SUPPORTED_OS[$key]+set}" ]]; then
+        _frosty_ok "Detected supported OS: ${FROSTY_OS_PRETTY:-$key}"
         return 0
     else
-        _frosty_fail "Unsupported OS: ${PRETTY_NAME:-$key}"
+        _frosty_fail "Unsupported OS: ${FROSTY_OS_PRETTY:-$key}"
         echo "    Supported: Ubuntu 20.04/22.04/24.04, Debian 11/12"
         return 1
     fi
