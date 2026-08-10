@@ -1,117 +1,103 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# ============================================================
+# Frosty.exe — All-in-One Pterodactyl Installer
+# Repo: https://github.com/Ronak-gaming/Petro.Frosty.exe
+# ============================================================
 
-# ==========================================
-# Frosty.exe
-# All-in-One Pterodactyl Installer
-# Phase 2 - Step 1
-# ==========================================
+set -uo pipefail
 
-clear
+FROSTY_RAW_BASE="https://raw.githubusercontent.com/Ronak-gaming/Petro.Frosty.exe/main"
 
-# ------------------------------------------
-# Colors
-# ------------------------------------------
+# ---- Colors ----
+C_CYAN='\e[36m'
+C_BLUE='\e[34m'
+C_BOLD='\e[1m'
+C_RESET='\e[0m'
+C_GREEN='\e[32m'
+C_YELLOW='\e[33m'
+C_RED='\e[31m'
 
-CYAN='\033[1;36m'
-ICE='\033[0;96m'
-WHITE='\033[1;97m'
-GREEN='\033[1;32m'
-YELLOW='\033[1;33m'
-RED='\033[1;31m'
-RESET='\033[0m'
-
-# ------------------------------------------
-# Frosty Banner
-# ------------------------------------------
-
-echo -e "${CYAN}"
-echo ""
-echo "╔══════════════════════════════════════════════╗"
-echo "║                                              ║"
-echo -e "║          ${WHITE}❄  F R O S T Y . E X E  ❄${CYAN}          ║"
-echo "║                                              ║"
-echo -e "║          ${ICE}❄  ALL-IN-ONE INSTALLER  ❄${CYAN}         ║"
-echo "║                                              ║"
-echo "║       ❄  ❄  ❄  ❄  ❄  ❄  ❄  ❄              ║"
-echo "║                                              ║"
-echo "╚══════════════════════════════════════════════╝"
-echo -e "${RESET}"
-
-sleep 0.5
-
-# ------------------------------------------
-# Root Check
-# ------------------------------------------
-
-echo ""
-echo -e "${ICE}❄ Checking administrator privileges...${RESET}"
-
-if [ "$EUID" -ne 0 ]; then
-    echo ""
-    echo -e "${RED}[✗] Frosty.exe must be run as root.${RESET}"
-    echo ""
-    echo "Please run:"
-    echo ""
-    echo "sudo bash install.sh"
-    echo ""
-    exit 1
-fi
-
-echo -e "${GREEN}[✓] Root access confirmed.${RESET}"
-
-# ------------------------------------------
-# Operating System Check
-# ------------------------------------------
-
-echo ""
-echo -e "${ICE}❄ Checking operating system...${RESET}"
-
-if [ ! -f /etc/os-release ]; then
-    echo -e "${RED}[✗] Cannot identify operating system.${RESET}"
-    exit 1
-fi
-
-. /etc/os-release
-
-echo -e "${ICE}❄ Detected: ${WHITE}${PRETTY_NAME}${RESET}"
-
-case "$ID" in
-    ubuntu|debian)
-        echo -e "${GREEN}[✓] Supported operating system.${RESET}"
-        ;;
-    *)
-        echo -e "${YELLOW}[!] This OS has not been tested by Frosty.exe.${RESET}"
-        echo -e "${YELLOW}[!] Installation will not continue automatically.${RESET}"
-        exit 1
-        ;;
-esac
-
-# ------------------------------------------
-# Basic Command Check
-# ------------------------------------------
-
-echo ""
-echo -e "${ICE}❄ Checking required system commands...${RESET}"
-
-COMMANDS="curl wget systemctl"
-
-for COMMAND in $COMMANDS; do
-    if command -v "$COMMAND" >/dev/null 2>&1; then
-        echo -e "${GREEN}[✓] ${COMMAND}${RESET}"
+# ---- Load lib modules (works both locally and via curl|bash) ----
+load_module() {
+    local name="$1"
+    if [[ -f "./lib/${name}" ]]; then
+        # shellcheck disable=SC1090
+        source "./lib/${name}"
     else
-        echo -e "${YELLOW}[!] ${COMMAND} is missing.${RESET}"
+        # shellcheck disable=SC1090
+        source <(curl -fsSL "${FROSTY_RAW_BASE}/lib/${name}")
     fi
-done
+}
 
-# ------------------------------------------
-# Final Result
-# ------------------------------------------
+# ---- Banner ----
+print_banner() {
+    echo -e "${C_CYAN}${C_BOLD}"
+    cat << "EOF"
+╔══════════════════════════════════════════════╗
+║                                                ║
+║          ❄  F R O S T Y . E X E  ❄           ║
+║                                                ║
+║          ❄  ALL-IN-ONE INSTALLER  ❄          ║
+║                                                ║
+║       ❄  ❄  ❄  ❄  ❄  ❄  ❄  ❄               ║
+║                                                ║
+╚══════════════════════════════════════════════╝
+EOF
+    echo -e "${C_RESET}"
+}
 
-echo ""
-echo -e "${CYAN}╔══════════════════════════════════════════════╗${RESET}"
-echo -e "${GREEN}║        ✓ SYSTEM CHECK PASSED                ║${RESET}"
-echo -e "${CYAN}╚══════════════════════════════════════════════╝${RESET}"
-echo ""
+# ---- Simple loading/flicker animation ----
+frosty_spinner() {
+    local msg="$1"
+    local pid=$2
+    local frames=("❄" "❅" "❆" "❅")
+    local i=0
+    tput civis 2>/dev/null || true
+    while kill -0 "$pid" 2>/dev/null; do
+        printf "\r${C_BLUE}%s${C_RESET} %s   " "${frames[$((i % 4))]}" "$msg"
+        i=$((i+1))
+        sleep 0.15
+    done
+    printf "\r${C_GREEN}✓${C_RESET} %s   \n" "$msg"
+    tput cnorm 2>/dev/null || true
+}
 
-echo -e "${ICE}❄ Frosty.exe is ready for the next stage.${RESET}"
-echo ""
+# ---- System detection (Phase 1 Step 5) ----
+detect_system() {
+    echo -e "${C_CYAN}== System Detection ==${C_RESET}"
+
+    # shellcheck disable=SC1091
+    source /etc/os-release 2>/dev/null || true
+
+    FROSTY_OS_NAME="${PRETTY_NAME:-Unknown}"
+    FROSTY_CPU_CORES="$(nproc 2>/dev/null || echo "unknown")"
+    FROSTY_RAM_MB="$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')"
+    FROSTY_DISK_FREE="$(df -h / 2>/dev/null | awk 'NR==2{print $4}')"
+    FROSTY_ARCH="$(uname -m)"
+    FROSTY_KERNEL="$(uname -r)"
+    FROSTY_IPV4="$(curl -s -4 --max-time 5 https://api.ipify.org || echo "unknown")"
+
+    echo "  OS:           $FROSTY_OS_NAME"
+    echo "  Architecture: $FROSTY_ARCH"
+    echo "  Kernel:       $FROSTY_KERNEL"
+    echo "  CPU Cores:    $FROSTY_CPU_CORES"
+    echo "  RAM:          ${FROSTY_RAM_MB:-unknown} MB"
+    echo "  Disk Free:    ${FROSTY_DISK_FREE:-unknown}"
+    echo "  IPv4:         $FROSTY_IPV4"
+    echo ""
+}
+
+# ---- Main ----
+main() {
+    clear
+    print_banner
+    detect_system
+
+    load_module "checks.sh"
+    run_safety_checks
+
+    echo -e "${C_CYAN}Frosty.exe foundation checks complete.${C_RESET}"
+    echo -e "${C_CYAN}Phase 2 Step 1 (safety checks) passed. Ready for Step 2.${C_RESET}"
+}
+
+main "$@"
