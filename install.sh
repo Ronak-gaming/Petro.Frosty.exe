@@ -116,11 +116,23 @@ main() {
         exit 1
     fi
 
-    echo -e "${C_CYAN}Phase 2 Step 3 (PHP installation) complete. Ready for Step 4.${C_RESET}"
+    echo -e "${C_CYAN}Phase 2 Step 3 (PHP installation) complete.${C_RESET}"
+
+    load_module "database.sh"
+    if ! install_database; then
+        echo -e "${C_RED}MariaDB installation failed. Aborting.${C_RESET}"
+        exit 1
+    fi
+    if ! install_redis; then
+        echo -e "${C_RED}Redis installation failed. Aborting.${C_RESET}"
+        exit 1
+    fi
+
+    echo -e "${C_CYAN}Phase 2 Step 4 (MariaDB & Redis) complete. Ready for Step 5.${C_RESET}"
 }
 
 main "$@"
 FROSTY_EOF
 
 echo "install.sh rewritten: $(wc -l < install.sh) lines"
-grep -n "php.sh\|install_php\|main \"\$@\"" install.sh
+grep -n "database.sh\|install_database\|install_redis\|php.sh\|install_php\|main \"\$@\"" install.sh
