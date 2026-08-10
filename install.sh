@@ -109,5 +109,11 @@ main() {
         exit 1
     fi
 
-    echo -e "${C_CYAN}Phase 2 Step 2 (package preparation) complete. Ready for Step 3.${C_RESET}"
+    load_module "php.sh"
+    if ! install_php; then
+        echo -e "${C_RED}PHP installation failed. Aborting.${C_RESET}"
+        exit 1
+    fi
+
+    echo -e "${C_CYAN}Phase 2 Step 3 (PHP installation) complete. Ready for Step 4.${C_RESET}"
 }
