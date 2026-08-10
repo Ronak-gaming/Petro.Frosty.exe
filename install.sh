@@ -101,8 +101,13 @@ main() {
     load_module "checks.sh"
     run_safety_checks
 
-    echo -e "${C_CYAN}Frosty.exe foundation checks complete.${C_RESET}"
-    echo -e "${C_CYAN}Phase 2 Step 1 (safety checks) passed. Ready for Step 2.${C_RESET}"
-}
+    load_module "prepare.sh"
+    install_dependencies
 
-main "$@"
+    if [[ "$FROSTY_CHECK_FAILED" -eq 1 ]]; then
+        echo -e "${C_RED}Dependency installation failed. Aborting.${C_RESET}"
+        exit 1
+    fi
+
+    echo -e "${C_CYAN}Phase 2 Step 2 (package preparation) complete. Ready for Step 3.${C_RESET}"
+}
