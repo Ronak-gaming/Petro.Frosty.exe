@@ -13,10 +13,9 @@ ICE='\033[0;96m'
 WHITE='\033[1;97m'
 RESET='\033[0m'
 
-# Snowflake symbols
-SNOW="❄"
-
-clear
+# ------------------------------------------
+# Frosty Banner
+# ------------------------------------------
 
 echo -e "${CYAN}"
 echo ""
@@ -31,14 +30,41 @@ echo "║                                              ║"
 echo "╚══════════════════════════════════════════════╝"
 echo -e "${RESET}"
 
-echo -e "${ICE}${SNOW} Initializing Frosty.exe...${RESET}"
 sleep 0.5
 
-echo -e "${ICE}${SNOW} Loading installer...${RESET}"
-sleep 0.5
+# ------------------------------------------
+# Frost Loading Animation
+# ------------------------------------------
 
-echo -e "${ICE}${SNOW} Frost Core: ONLINE${RESET}"
-sleep 0.5
+echo ""
+
+frames=(
+    "❄"
+    "❄ ❄"
+    "❄ ❄ ❄"
+    "❄ ❄ ❄ ❄"
+    "❄ ❄ ❄ ❄ ❄"
+)
+
+for frame in "${frames[@]}"; do
+    printf "\r${CYAN}[%s] Frost Core Initializing...${RESET}" "$frame"
+    sleep 0.25
+done
+
+echo ""
+
+# ------------------------------------------
+# Startup Status
+# ------------------------------------------
+
+echo -e "${ICE}❄ Initializing Frosty.exe...${RESET}"
+sleep 0.4
+
+echo -e "${ICE}❄ Loading installer...${RESET}"
+sleep 0.4
+
+echo -e "${ICE}❄ Frost Core: ${WHITE}ONLINE${RESET}"
+sleep 0.4
 
 echo ""
 echo -e "${CYAN}[✓] Frosty.exe started successfully${RESET}"
