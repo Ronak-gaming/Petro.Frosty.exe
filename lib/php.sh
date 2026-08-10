@@ -1,3 +1,4 @@
+cat > lib/php.sh << 'FROSTY_EOF'
 #!/usr/bin/env bash
 # ============================================================
 # Frosty.exe - Phase 2 Step 3: PHP Installation & Configuration
@@ -58,7 +59,6 @@ install_php() {
     echo ""
     echo "== Installing PHP ${FROSTY_PHP_VERSION} =="
 
-    # Detect existing PHP install matching required version
     if command -v "php${FROSTY_PHP_VERSION}" >/dev/null 2>&1; then
         local current_ver
         current_ver="$(php${FROSTY_PHP_VERSION} -v 2>/dev/null | head -1)"
@@ -77,7 +77,6 @@ install_php() {
         fi
     fi
 
-    # Enable & start php-fpm (skip gracefully if no systemd)
     if [[ -d /run/systemd/system ]]; then
         systemctl enable "php${FROSTY_PHP_VERSION}-fpm" >/dev/null 2>&1
         systemctl restart "php${FROSTY_PHP_VERSION}-fpm" >/dev/null 2>&1
@@ -93,7 +92,6 @@ install_php() {
         _frosty_warn "No systemd — skipping php-fpm service management (start manually)"
     fi
 
-    # Verify required extensions loaded
     local missing_ext=()
     for ext in "${FROSTY_PHP_REQUIRED_EXT[@]}"; do
         if ! "php${FROSTY_PHP_VERSION}" -m 2>/dev/null | grep -qi "^${ext}$"; then
@@ -111,3 +109,5 @@ install_php() {
     export FROSTY_PHP_VERSION
     return 0
 }
+FROSTY_EOF
+echo "created: $(wc -l < lib/php.sh) lines"
