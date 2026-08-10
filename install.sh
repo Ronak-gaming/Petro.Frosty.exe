@@ -1,3 +1,4 @@
+cat > install.sh << 'FROSTY_EOF'
 #!/usr/bin/env bash
 # ============================================================
 # Frosty.exe — All-in-One Pterodactyl Installer
@@ -117,3 +118,9 @@ main() {
 
     echo -e "${C_CYAN}Phase 2 Step 3 (PHP installation) complete. Ready for Step 4.${C_RESET}"
 }
+
+main "$@"
+FROSTY_EOF
+
+echo "install.sh rewritten: $(wc -l < install.sh) lines"
+grep -n "php.sh\|install_php\|main \"\$@\"" install.sh
