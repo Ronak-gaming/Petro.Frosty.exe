@@ -7,24 +7,39 @@
 
 clear
 
+# Colors
+CYAN='\033[1;36m'
+ICE='\033[0;96m'
+WHITE='\033[1;97m'
+RESET='\033[0m'
+
+# Snowflake symbols
+SNOW="❄"
+
+clear
+
+echo -e "${CYAN}"
 echo ""
 echo "╔══════════════════════════════════════════════╗"
 echo "║                                              ║"
-echo "║          ❄  F R O S T Y . E X E  ❄          ║"
+echo -e "║          ${WHITE}❄  F R O S T Y . E X E  ❄${CYAN}          ║"
 echo "║                                              ║"
-echo "║          ❄  ALL-IN-ONE INSTALLER  ❄         ║"
+echo -e "║          ${ICE}❄  ALL-IN-ONE INSTALLER  ❄${CYAN}         ║"
 echo "║                                              ║"
 echo "║       ❄  ❄  ❄  ❄  ❄  ❄  ❄  ❄              ║"
 echo "║                                              ║"
 echo "╚══════════════════════════════════════════════╝"
+echo -e "${RESET}"
+
+echo -e "${ICE}${SNOW} Initializing Frosty.exe...${RESET}"
+sleep 0.5
+
+echo -e "${ICE}${SNOW} Loading installer...${RESET}"
+sleep 0.5
+
+echo -e "${ICE}${SNOW} Frost Core: ONLINE${RESET}"
+sleep 0.5
+
 echo ""
-
-echo "❄ Initializing Frosty.exe..."
-echo "❄ Loading installer..."
-echo "❄ Frost Core: ONLINE"
-echo ""
-
-sleep 1
-
-echo "[✓] Frosty.exe started successfully"
+echo -e "${CYAN}[✓] Frosty.exe started successfully${RESET}"
 echo ""
