@@ -66,10 +66,15 @@ frosty_spinner() {
 detect_system() {
     echo -e "${C_CYAN}== System Detection ==${C_RESET}"
 
+    set +u
     # shellcheck disable=SC1091
     source /etc/os-release 2>/dev/null || true
+    set -u
 
-    FROSTY_OS_NAME="${PRETTY_NAME:-Unknown}"
+    FROSTY_OS_ID="${ID:-unknown}"
+    FROSTY_OS_VERSION="${VERSION_ID:-unknown}"
+    FROSTY_OS_PRETTY="${PRETTY_NAME:-Unknown}"
+    FROSTY_OS_NAME="$FROSTY_OS_PRETTY"
     FROSTY_CPU_CORES="$(nproc 2>/dev/null || echo "unknown")"
     FROSTY_RAM_MB="$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')"
     FROSTY_DISK_FREE="$(df -h / 2>/dev/null | awk 'NR==2{print $4}')"
