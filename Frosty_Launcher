@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+git clone https://github.com/Ronak-gaming/Petro.Frosty.exe.git && cd Petro.Frosty.exe && sudo bash install.sh
