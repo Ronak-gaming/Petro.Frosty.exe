@@ -4,17 +4,17 @@ set -uo pipefail
 show_main_menu() {
     clear
     print_banner
-    echo -e "${C_CYAN}╔══════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_CYAN}║          ❄  F R O S T Y . E X E  ❄           ║${C_RESET}"
-    echo -e "${C_CYAN}╠══════════════════════════════════════════════╣${C_RESET}"
-    echo -e "${C_CYAN}║                                                ║${C_RESET}"
-    echo -e "${C_CYAN}║  [1] Pterodactyl (Panel / Wings)              ║${C_RESET}"
-    echo -e "${C_CYAN}║  [2] Cloudflare                               ║${C_RESET}"
-    echo -e "${C_CYAN}║  [3] VPS Installer                            ║${C_RESET}"
-    echo -e "${C_CYAN}║  [4] Repair / Start All Services              ║${C_RESET}"
-    echo -e "${C_CYAN}║  [5] Exit                                     ║${C_RESET}"
-    echo -e "${C_CYAN}║                                                ║${C_RESET}"
-    echo -e "${C_CYAN}╚══════════════════════════════════════════════╝${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}          ${C_ICE}${C_BOLD}❄  F R O S T Y . E X E  ❄${C_RESET}           ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Pterodactyl (Panel / Wings)${C_RESET}              ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[2]${C_RESET} ${C_WHITE}Cloudflare${C_RESET}                               ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[3]${C_RESET} ${C_WHITE}VPS Installer${C_RESET}                            ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[4]${C_RESET} ${C_WHITE}Repair / Start All Services${C_RESET}              ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_RED}[5]${C_RESET} ${C_WHITE}Exit${C_RESET}                                     ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
     read -rp "  Select an option [1-5]: " frosty_choice
 
@@ -35,15 +35,15 @@ show_main_menu() {
 show_pterodactyl_menu() {
     clear
     print_banner
-    echo -e "${C_CYAN}╔══════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_CYAN}║        ❄  P T E R O D A C T Y L  ❄           ║${C_RESET}"
-    echo -e "${C_CYAN}╠══════════════════════════════════════════════╣${C_RESET}"
-    echo -e "${C_CYAN}║                                                ║${C_RESET}"
-    echo -e "${C_CYAN}║  [1] Panel                                    ║${C_RESET}"
-    echo -e "${C_CYAN}║  [2] Wings                                    ║${C_RESET}"
-    echo -e "${C_CYAN}║  [3] Back to Main Menu                        ║${C_RESET}"
-    echo -e "${C_CYAN}║                                                ║${C_RESET}"
-    echo -e "${C_CYAN}╚══════════════════════════════════════════════╝${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}        ${C_ICE}${C_BOLD}❄  P T E R O D A C T Y L  ❄${C_RESET}           ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Panel${C_RESET}                                    ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[2]${C_RESET} ${C_WHITE}Wings${C_RESET}                                    ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[3]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                        ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
     read -rp "  Select an option [1-3]: " pty_choice
 
