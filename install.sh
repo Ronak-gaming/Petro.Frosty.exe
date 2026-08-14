@@ -9,14 +9,20 @@ set -uo pipefail
 FROSTY_RAW_BASE="https://raw.githubusercontent.com/Ronak-gaming/Petro.Frosty.exe/main"
 FROSTY_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-C_CYAN='\e[36m'
-C_BLUE='\e[34m'
+# ---- Colors ----
+C_CYAN='\e[38;5;51m'
+C_ICE='\e[38;5;159m'
+C_FROST='\e[38;5;123m'
+C_BLUE='\e[38;5;33m'
+C_PURPLE='\e[38;5;111m'
 C_BOLD='\e[1m'
 C_RESET='\e[0m'
-C_GREEN='\e[32m'
-C_YELLOW='\e[33m'
-C_RED='\e[31m'
+C_GREEN='\e[38;5;46m'
+C_YELLOW='\e[38;5;220m'
+C_RED='\e[38;5;196m'
+C_WHITE='\e[38;5;255m'
 
+# ---- Load lib modules (works both locally and via curl|bash) ----
 load_module() {
     local name="$1"
     if [[ -f "${FROSTY_SCRIPT_DIR}/lib/${name}" ]]; then
@@ -26,22 +32,20 @@ load_module() {
     fi
 }
 
+# ---- Banner ----
 print_banner() {
-    echo -e "${C_CYAN}${C_BOLD}"
-    cat << "EOF"
-╔══════════════════════════════════════════════╗
-║                                                ║
-║          ❄  F R O S T Y . E X E  ❄           ║
-║                                                ║
-║          ❄  ALL-IN-ONE INSTALLER  ❄          ║
-║                                                ║
-║       ❄  ❄  ❄  ❄  ❄  ❄  ❄  ❄               ║
-║                                                ║
-╚══════════════════════════════════════════════╝
-EOF
-    echo -e "${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}          ${C_ICE}${C_BOLD}❄${C_RESET}  ${C_WHITE}${C_BOLD}F R O S T Y . E X E${C_RESET}  ${C_ICE}${C_BOLD}❄${C_RESET}           ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}          ${C_PURPLE}${C_BOLD}❄  ALL-IN-ONE INSTALLER  ❄${C_RESET}          ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}       ${C_CYAN}❄  ${C_ICE}❄  ${C_BLUE}❄  ${C_PURPLE}❄  ${C_CYAN}❄  ${C_ICE}❄  ${C_BLUE}❄  ${C_PURPLE}❄${C_RESET}               ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
 }
 
+# ---- Simple loading/flicker animation ----
 frosty_spinner() {
     local msg="$1"
     local pid=$2
@@ -57,11 +61,14 @@ frosty_spinner() {
     tput cnorm 2>/dev/null || true
 }
 
+# ---- System detection (Phase 1 Step 5) ----
 detect_system() {
     echo -e "${C_CYAN}== System Detection ==${C_RESET}"
+
     set +u
     source /etc/os-release 2>/dev/null || true
     set -u
+
     FROSTY_OS_ID="${ID:-unknown}"
     FROSTY_OS_VERSION="${VERSION_ID:-unknown}"
     FROSTY_OS_PRETTY="${PRETTY_NAME:-Unknown}"
@@ -72,6 +79,7 @@ detect_system() {
     FROSTY_ARCH="$(uname -m)"
     FROSTY_KERNEL="$(uname -r)"
     FROSTY_IPV4="$(curl -s -4 --max-time 5 https://api.ipify.org || echo "unknown")"
+
     echo "  OS:           $FROSTY_OS_NAME"
     echo "  Architecture: $FROSTY_ARCH"
     echo "  Kernel:       $FROSTY_KERNEL"
@@ -82,6 +90,7 @@ detect_system() {
     echo ""
 }
 
+# ---- Main ----
 main() {
     load_module "logging.sh"
     load_module "checks.sh"
