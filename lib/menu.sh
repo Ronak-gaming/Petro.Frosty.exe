@@ -167,6 +167,11 @@ run_wings_flow() {
         _frosty_fail "No FQDN entered"
         return 1
     fi
+
+    # Sanitize: strip protocol and trailing slash, keep just the hostname
+    wings_fqdn="${wings_fqdn%/}"
+    wings_fqdn="${wings_fqdn#http://}"
+    wings_fqdn="${wings_fqdn#https://}"
     export FROSTY_WINGS_FQDN="$wings_fqdn"
 
     echo ""
