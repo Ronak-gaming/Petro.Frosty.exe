@@ -25,7 +25,13 @@ show_main_menu() {
     case "$frosty_choice" in
         1) show_pterodactyl_menu ;;
         2) run_cloudflare_flow ;;
-        3) load_module "vps.sh"; show_vps_submenu ;;
+        3)
+            if [[ -e /dev/kvm ]]; then
+                load_module "vps.sh"; show_vps_submenu
+            else
+                load_module "vps_docker.sh"; show_vps_docker_submenu
+            fi
+            ;;
         4) load_module "repair.sh"; repair_all_services ;;
         5) echo -e "${C_CYAN}Goodbye.${C_RESET}"; exit 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
@@ -168,7 +174,6 @@ run_wings_flow() {
         return 1
     fi
 
-    # Sanitize: strip protocol and trailing slash, keep just the hostname
     wings_fqdn="${wings_fqdn%/}"
     wings_fqdn="${wings_fqdn#http://}"
     wings_fqdn="${wings_fqdn#https://}"
