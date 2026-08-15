@@ -40,7 +40,7 @@ print_banner() {
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}          ${C_PURPLE}${C_BOLD}❄  ALL-IN-ONE INSTALLER  ❄${C_RESET}          ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}              ${C_CYAN}❄${C_RESET} ${C_ICE}❄${C_RESET} ${C_BLUE}❄${C_RESET} ${C_PURPLE}❄${C_RESET} ${C_CYAN}❄${C_RESET} ${C_ICE}❄${C_RESET} ${C_BLUE}❄${C_RESET} ${C_PURPLE}❄${C_RESET}      ${C_FROST}${C_BOLD}                          ║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}              ${C_CYAN}❄${C_RESET} ${C_ICE}❄${C_RESET} ${C_BLUE}❄${C_RESET} ${C_PURPLE}❄${C_RESET} ${C_CYAN}❄${C_RESET} ${C_ICE}❄${C_RESET} ${C_BLUE}❄${C_RESET} ${C_PURPLE}❄${C_RESET}      ${C_FROST}${C_BOLD}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}    ${C_CYAN}Created${C_RESET} ${C_WHITE}and${C_RESET} ${C_ICE}maintained${C_RESET} ${C_WHITE}by${C_RESET} ${C_PURPLE}${C_BOLD}Ronak${C_RESET} ${C_BLUE}${C_BOLD}Gaming${C_RESET}   ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
