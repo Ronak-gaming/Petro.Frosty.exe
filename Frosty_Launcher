@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -e
 
+FIRST_RUN=true
+if [[ -d "Petro.Frosty.exe" ]]; then
+    FIRST_RUN=false
+fi
+
 # If already root, skip all elevation logic entirely
 if [[ "$(id -u)" -eq 0 ]]; then
     RUN_AS_ROOT=""
@@ -17,7 +22,10 @@ else
     fi
 fi
 
-$RUN_AS_ROOT apt update -y
+if [[ "$FIRST_RUN" == true ]]; then
+    echo "First run detected — updating package index..."
+    $RUN_AS_ROOT apt update -y
+fi
 
 if ! command -v git >/dev/null 2>&1; then
     echo "git not found — installing..."
