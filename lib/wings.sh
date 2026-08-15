@@ -100,6 +100,17 @@ configure_wings() {
         read -rp "  Enter your Panel's public URL (e.g. https://panel.yourdomain.com): " panel_url
     fi
 
+    # Sanitize: strip trailing slash, strip any protocol, re-add https:// cleanly
+    panel_url="${panel_url%/}"
+    panel_url="${panel_url#http://}"
+    panel_url="${panel_url#https://}"
+    panel_url="https://${panel_url}"
+
+    if [[ -z "$panel_url" || "$panel_url" == "https://" ]]; then
+        _frosty_fail "Panel URL cannot be empty"
+        return 1
+    fi
+
     echo "$raw_config" | \
         sed '/ssl:/,/enabled:/{s/enabled: true/enabled: false/}' | \
         sed "/^remote:/c\\remote: '${panel_url}'" | \
