@@ -672,28 +672,29 @@ vps_rejoin_sshx() {
 show_vps_submenu() {
     clear
     print_banner
-    echo -e "${C_CYAN}╔══════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_CYAN}║        ❄  V P S   I N S T A L L E R  ❄        ║${C_RESET}"
-    echo -e "${C_CYAN}╠══════════════════════════════════════════════╣${C_RESET}"
-    echo -e "${C_CYAN}║                                                ║${C_RESET}"
-    echo -e "${C_CYAN}║  [1] Set Up VPS                               ║${C_RESET}"
-    echo -e "${C_CYAN}║  [2] List VPS                                 ║${C_RESET}"
-    echo -e "${C_CYAN}║  [3] Resource Dashboard                       ║${C_RESET}"
-    echo -e "${C_CYAN}║  [4] Start VPS                                ║${C_RESET}"
-    echo -e "${C_CYAN}║  [5] Stop VPS                                 ║${C_RESET}"
-    echo -e "${C_CYAN}║  [6] Edit VPS Config                          ║${C_RESET}"
-    echo -e "${C_CYAN}║  [7] Snapshots                                ║${C_RESET}"
-    echo -e "${C_CYAN}║  [8] Firewall / Ports                         ║${C_RESET}"
-    echo -e "${C_CYAN}║  [9] Delete VPS                               ║${C_RESET}"
-    echo -e "${C_CYAN}║  [10] Share via tmate                         ║${C_RESET}"
-    echo -e "${C_CYAN}║  [11] Rejoin tmate Session                    ║${C_RESET}"
-    echo -e "${C_CYAN}║  [12] Share via sshx                          ║${C_RESET}"
-    echo -e "${C_CYAN}║  [13] Rejoin sshx Session                     ║${C_RESET}"
-    echo -e "${C_CYAN}║  [14] Back to Main Menu                       ║${C_RESET}"
-    echo -e "${C_CYAN}║                                                ║${C_RESET}"
-    echo -e "${C_CYAN}╚══════════════════════════════════════════════╝${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}        ${C_ICE}${C_BOLD}❄  V P S   I N S T A L L E R  ❄${C_RESET}        ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET}  ${C_WHITE}Set Up VPS${C_RESET}                              ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[2]${C_RESET}  ${C_WHITE}List VPS${C_RESET}                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[3]${C_RESET}  ${C_WHITE}Resource Dashboard${C_RESET}                      ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_GREEN}[4]${C_RESET}  ${C_WHITE}Start VPS${C_RESET}                               ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_YELLOW}[5]${C_RESET}  ${C_WHITE}Stop VPS${C_RESET}                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[6]${C_RESET}  ${C_WHITE}Edit VPS Config${C_RESET}                         ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[7]${C_RESET}  ${C_WHITE}Snapshots${C_RESET}                               ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[8]${C_RESET}  ${C_WHITE}Firewall / Ports${C_RESET}                        ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_RED}[9]${C_RESET}  ${C_WHITE}Delete VPS${C_RESET}                              ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[10]${C_RESET} ${C_WHITE}Share via tmate${C_RESET}                         ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[11]${C_RESET} ${C_WHITE}Rejoin tmate Session${C_RESET}                    ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[12]${C_RESET} ${C_WHITE}Share via sshx${C_RESET}                          ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[13]${C_RESET} ${C_WHITE}Rejoin sshx Session${C_RESET}                     ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[14]${C_RESET} ${C_WHITE}Expose SSH via Cloudflare${C_RESET}               ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[15]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                       ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-14]: " vps_choice
+    read -rp "  Select an option [1-15]: " vps_choice
 
     case "$vps_choice" in
         1) install_vps_stack && vps_create ;;
@@ -709,7 +710,8 @@ show_vps_submenu() {
         11) vps_rejoin_tmate ;;
         12) vps_share_sshx ;;
         13) vps_rejoin_sshx ;;
-        14) return 0 ;;
+        14) vps_expose_ssh ;;
+        15) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 
