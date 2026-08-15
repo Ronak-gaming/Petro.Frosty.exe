@@ -142,16 +142,14 @@ cloudflare_configured() {
 show_cloudflare_submenu() {
     clear
     print_banner
-    echo -e "${C_CYAN}╔══════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_CYAN}║      ❄  C L O U D F L A R E  ❄               ║${C_RESET}"
-    echo -e "${C_CYAN}╠══════════════════════════════════════════════╣${C_RESET}"
-    echo -e "${C_CYAN}║                                                ║${C_RESET}"
-    echo -e "${C_CYAN}║  [1] Status                                   ║${C_RESET}"
-    echo -e "${C_CYAN}║  [2] Reconnect with New Token                 ║${C_RESET}"
-    echo -e "${C_CYAN}║  [3] Remove Tunnel                            ║${C_RESET}"
-    echo -e "${C_CYAN}║  [4] Back to Main Menu                        ║${C_RESET}"
-    echo -e "${C_CYAN}║                                                ║${C_RESET}"
-    echo -e "${C_CYAN}╚══════════════════════════════════════════════╝${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}      ${C_ICE}${C_BOLD}❄  C L O U D F L A R E  ❄${C_RESET}               ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Status${C_RESET}                                   ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[2]${C_RESET} ${C_WHITE}Reconnect with New Token${C_RESET}                 ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_RED}[3]${C_RESET} ${C_WHITE}Remove Tunnel${C_RESET}                            ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[4]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                        ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
     read -rp "  Select an option [1-4]: " sub_choice
 
