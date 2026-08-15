@@ -5,6 +5,14 @@ FROSTY_VPS_DIR="/var/lib/frosty-vps"
 FROSTY_VPS_IMG_DIR="${FROSTY_VPS_DIR}/images"
 FROSTY_VPS_SNAP_DIR="${FROSTY_VPS_DIR}/snapshots"
 
+_frosty_vps_check_stack() {
+    if ! command -v virsh >/dev/null 2>&1; then
+        _frosty_warn "KVM/libvirt not installed yet — run [1] Set Up VPS first"
+        return 1
+    fi
+    return 0
+}
+
 install_vps_stack() {
     echo ""
     echo "== Installing KVM/Libvirt Stack =="
@@ -69,6 +77,7 @@ _frosty_vps_image_url() {
     case "$1" in
         ubuntu2604) echo "https://cloud-images.ubuntu.com/releases/resolute/release/ubuntu-26.04-server-cloudimg-amd64.img" ;;
         ubuntu2404) echo "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img" ;;
+        ubuntu2204) echo "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img" ;;
         debian11) echo "https://cloud.debian.org/images/cloud/bullseye/latest/debian-11-genericcloud-amd64.qcow2" ;;
         debian12) echo "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2" ;;
         debian13) echo "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-generic-amd64.qcow2" ;;
@@ -96,15 +105,16 @@ vps_create() {
         return 1
     fi
 
-    echo "  Image: [1] Ubuntu 26.04 LTS (latest)  [2] Ubuntu 24.04 LTS"
-    echo "         [3] Debian 11  [4] Debian 12  [5] Debian 13 (latest)"
-    read -rp "  Choice [1-5]: " img_choice
+    echo "  Image: [1] Ubuntu 26.04 LTS (latest)  [2] Ubuntu 24.04 LTS  [3] Ubuntu 22.04 LTS"
+    echo "         [4] Debian 11  [5] Debian 12  [6] Debian 13 (latest)"
+    read -rp "  Choice [1-6]: " img_choice
     case "$img_choice" in
         1) img_key="ubuntu2604" ;;
         2) img_key="ubuntu2404" ;;
-        3) img_key="debian11" ;;
-        4) img_key="debian12" ;;
-        5) img_key="debian13" ;;
+        3) img_key="ubuntu2204" ;;
+        4) img_key="debian11" ;;
+        5) img_key="debian12" ;;
+        6) img_key="debian13" ;;
         *) _frosty_fail "Invalid image choice"; return 1 ;;
     esac
     local img_url
@@ -146,7 +156,6 @@ vps_create() {
         _frosty_fail "Root password is required"
         return 1
     fi
-    read -rp "  Set root password for the VM: " vm_pass
 
     local base_img="${FROSTY_VPS_IMG_DIR}/${img_key}.qcow2"
     local vm_disk_path="${FROSTY_VPS_IMG_DIR}/${vm_name}.qcow2"
@@ -231,7 +240,6 @@ CIEOF
     iptables -t nat -A PREROUTING -p tcp --dport "${vm_sshport}" -j DNAT --to-destination "${vm_ip}:22" -m comment --comment "frosty-${vm_name}-ssh"
     iptables -A FORWARD -p tcp -d "${vm_ip}" --dport 22 -j ACCEPT -m comment --comment "frosty-${vm_name}-ssh"
 
-    # Save metadata for dashboard/firewall use
     cat > "${FROSTY_VPS_IMG_DIR}/${vm_name}.meta" << METAEOF
 image=${img_key}
 ssh_port=${vm_sshport}
@@ -293,12 +301,15 @@ METAEOF
 vps_list() {
     echo ""
     echo "== VPS Instances =="
+    _frosty_vps_check_stack || return 1
     virsh list --all
 }
 
 vps_dashboard() {
     echo ""
     echo -e "${C_CYAN:-}== VPS Resource Dashboard ==${C_RESET:-}"
+    _frosty_vps_check_stack || return 1
+
     local vms
     vms="$(virsh list --all --name 2>/dev/null | grep -v '^$')"
 
@@ -333,6 +344,7 @@ vps_dashboard() {
 
 vps_start() {
     echo ""
+    _frosty_vps_check_stack || return 1
     read -rp "  VM name to start: " vm_name
     if virsh start "$vm_name" >/tmp/frosty_vps_start.log 2>&1; then
         _frosty_ok "'$vm_name' started"
@@ -344,6 +356,7 @@ vps_start() {
 
 vps_stop() {
     echo ""
+    _frosty_vps_check_stack || return 1
     read -rp "  VM name to stop: " vm_name
     if virsh shutdown "$vm_name" >/tmp/frosty_vps_stop.log 2>&1; then
         _frosty_ok "'$vm_name' shutdown signal sent"
@@ -355,6 +368,7 @@ vps_stop() {
 
 vps_edit_config() {
     echo ""
+    _frosty_vps_check_stack || return 1
     read -rp "  VM name to edit: " vm_name
     if ! virsh dominfo "$vm_name" >/dev/null 2>&1; then
         _frosty_fail "VM '$vm_name' not found"
@@ -391,6 +405,7 @@ vps_edit_config() {
 
 vps_delete() {
     echo ""
+    _frosty_vps_check_stack || return 1
     read -rp "  VM name to DELETE: " vm_name
     read -rp "  Type DELETE to confirm removing '$vm_name' and its disk: " confirm
     if [[ "$confirm" != "DELETE" ]]; then
@@ -400,7 +415,6 @@ vps_delete() {
     virsh destroy "$vm_name" >/dev/null 2>&1
     virsh undefine "$vm_name" --remove-all-storage >/tmp/frosty_vps_delete.log 2>&1
 
-    # Clean up all iptables rules tagged for this VM
     for chain in PREROUTING; do
         while iptables -t nat -L "$chain" -n --line-numbers | grep -q "frosty-${vm_name}-"; do
             local ln
@@ -421,6 +435,7 @@ vps_delete() {
 
 vps_snapshot_create() {
     echo ""
+    _frosty_vps_check_stack || return 1
     read -rp "  VM name to snapshot: " vm_name
     if ! virsh dominfo "$vm_name" >/dev/null 2>&1; then
         _frosty_fail "VM '$vm_name' not found"
@@ -660,13 +675,62 @@ vps_rejoin_sshx() {
     fi
 
     local link
-    link="$(grep -oE 'https://sshx\.io/s/[A-Za-z0-9#,\-]+' "$sshx_log" | tail -1)"
+    link="$(sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' "$sshx_log" | grep -oE 'https://sshx\.io/s/[A-Za-z0-9#]+' | tail -1)"
     if [[ -n "$link" ]]; then
         echo -e "    ${C_CYAN:-}Session is alive. Link for '$vm_name':${C_RESET:-}"
         echo "    $link"
     else
         _frosty_warn "Session process alive but no link found in log — check $sshx_log manually"
     fi
+}
+
+vps_expose_ssh() {
+    echo ""
+    echo -e "${C_CYAN:-}== Expose VPS SSH via Cloudflare Tunnel ==${C_RESET:-}"
+    read -rp "  VM name to expose: " vm_name
+    local vm_ip
+    vm_ip="$(_frosty_vps_ip "$vm_name")"
+    if [[ -z "$vm_ip" ]]; then
+        _frosty_fail "No IP on record for '$vm_name'"
+        return 1
+    fi
+
+    if ! command -v cloudflared >/dev/null 2>&1; then
+        _frosty_fail "cloudflared not installed — go to [2] Cloudflare on the main menu first"
+        return 1
+    fi
+
+    local cf_marker="${HOME}/.frosty_cloudflare_configured"
+    if [[ ! -f "$cf_marker" ]]; then
+        _frosty_fail "No Cloudflare tunnel connected — go to [2] Cloudflare on the main menu first"
+        return 1
+    fi
+
+    read -rp "  Enter the SSH hostname you want (e.g. ssh-${vm_name}.yourdomain.com): " ssh_fqdn
+    if [[ -z "$ssh_fqdn" ]]; then
+        _frosty_fail "No hostname entered"
+        return 1
+    fi
+
+    echo ""
+    echo -e "${C_YELLOW:-}Now go to your Cloudflare Tunnel dashboard (one.dash.cloudflare.com${C_RESET:-}"
+    echo -e "${C_YELLOW:-}-> Networks -> Tunnels -> your tunnel -> Public Hostname tab) and add:${C_RESET:-}"
+    echo -e "${C_CYAN:-}    Subdomain/domain: ${ssh_fqdn}${C_RESET:-}"
+    echo -e "${C_CYAN:-}    Service Type: SSH${C_RESET:-}"
+    echo -e "${C_CYAN:-}    URL: ${vm_ip}:22${C_RESET:-}"
+    echo ""
+    read -rp "  Press Enter once you've added that route in Cloudflare..." _
+
+    _frosty_ok "Route configured on Cloudflare's side."
+    echo ""
+    echo -e "    ${C_CYAN:-}Anyone with cloudflared installed can now connect via:${C_RESET:-}"
+    echo -e "    ${C_CYAN:-}  cloudflared access ssh --hostname ${ssh_fqdn}${C_RESET:-}"
+    echo -e "    ${C_YELLOW:-}Or add this to their ~/.ssh/config for plain 'ssh' usage:${C_RESET:-}"
+    echo -e "    ${C_CYAN:-}    Host ${ssh_fqdn}${C_RESET:-}"
+    echo -e "    ${C_CYAN:-}      ProxyCommand cloudflared access ssh --hostname %h${C_RESET:-}"
+    echo ""
+    echo "$ssh_fqdn" >> "${FROSTY_VPS_IMG_DIR}/${vm_name}.meta"
+    return 0
 }
 
 show_vps_submenu() {
