@@ -16,7 +16,11 @@ show_main_menu() {
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-5]: " frosty_choice
+
+    local frosty_choice=""
+    while [[ -z "$frosty_choice" ]]; do
+        read -rp "  Select an option [1-5]: " frosty_choice
+    done
 
     case "$frosty_choice" in
         1) show_pterodactyl_menu ;;
