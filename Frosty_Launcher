@@ -1,12 +1,23 @@
 #!/usr/bin/env bash
 set -e
 
-FIRST_RUN=true
-if [[ -d "Petro.Frosty.exe" ]]; then
-    FIRST_RUN=false
+REPO_DIR="Petro.Frosty.exe"
+
+if [[ -d "$REPO_DIR" ]]; then
+    # Already cloned before — just cd and run
+    cd "$REPO_DIR"
+    if [[ "$(id -u)" -eq 0 ]]; then
+        bash install.sh
+    else
+        sudo bash install.sh
+    fi
+    exit 0
 fi
 
-# If already root, skip all elevation logic entirely
+# ---- First run only, below this line ----
+
+echo "First run detected — setting up..."
+
 if [[ "$(id -u)" -eq 0 ]]; then
     RUN_AS_ROOT=""
 else
@@ -22,19 +33,14 @@ else
     fi
 fi
 
-if [[ "$FIRST_RUN" == true ]]; then
-    echo "First run detected — updating package index..."
-    $RUN_AS_ROOT apt update -y
-fi
+$RUN_AS_ROOT apt update -y
 
 if ! command -v git >/dev/null 2>&1; then
     echo "git not found — installing..."
     $RUN_AS_ROOT apt install -y git
 fi
 
-if [[ ! -d "Petro.Frosty.exe" ]]; then
-    git clone https://github.com/Ronak-gaming/Petro.Frosty.exe.git
-fi
+git clone https://github.com/Ronak-gaming/Petro.Frosty.exe.git
 
-cd Petro.Frosty.exe
+cd "$REPO_DIR"
 $RUN_AS_ROOT bash install.sh
