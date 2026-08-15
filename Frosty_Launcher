@@ -1,2 +1,32 @@
 #!/usr/bin/env bash
-git clone https://github.com/Ronak-gaming/Petro.Frosty.exe.git && cd Petro.Frosty.exe && sudo bash install.sh
+set -e
+
+# If already root, skip all elevation logic entirely
+if [[ "$(id -u)" -eq 0 ]]; then
+    RUN_AS_ROOT=""
+else
+    if command -v sudo >/dev/null 2>&1; then
+        RUN_AS_ROOT="sudo"
+    else
+        echo "This system has no 'sudo' installed and you're not logged in as root."
+        echo "You'll need the root password to continue."
+        echo ""
+        echo "Attempting: su -c 'apt update -y && apt install -y sudo'"
+        su -c "apt update -y && apt install -y sudo"
+        RUN_AS_ROOT="sudo"
+    fi
+fi
+
+$RUN_AS_ROOT apt update -y
+
+if ! command -v git >/dev/null 2>&1; then
+    echo "git not found — installing..."
+    $RUN_AS_ROOT apt install -y git
+fi
+
+if [[ ! -d "Petro.Frosty.exe" ]]; then
+    git clone https://github.com/Ronak-gaming/Petro.Frosty.exe.git
+fi
+
+cd Petro.Frosty.exe
+$RUN_AS_ROOT bash install.sh
