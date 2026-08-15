@@ -44,6 +44,7 @@ print_banner() {
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
 }
+
 # ---- Simple loading/flicker animation ----
 frosty_spinner() {
     local msg="$1"
