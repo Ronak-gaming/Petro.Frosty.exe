@@ -103,16 +103,16 @@ panel_installed() {
 show_panel_submenu() {
     clear
     print_banner
-    echo -e "${C_CYAN}╔══════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_CYAN}║        ❄  P A N E L   M A N A G E R  ❄        ║${C_RESET}"
-    echo -e "${C_CYAN}╠══════════════════════════════════════════════╣${C_RESET}"
-    echo -e "${C_CYAN}║                                                ║${C_RESET}"
-    echo -e "${C_CYAN}║  [1] Add User                                 ║${C_RESET}"
-    echo -e "${C_CYAN}║  [2] Update Panel                             ║${C_RESET}"
-    echo -e "${C_CYAN}║  [3] Uninstall Panel                          ║${C_RESET}"
-    echo -e "${C_CYAN}║  [4] Back to Main Menu                        ║${C_RESET}"
-    echo -e "${C_CYAN}║                                                ║${C_RESET}"
-    echo -e "${C_CYAN}╚══════════════════════════════════════════════╝${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}        ${C_ICE}${C_BOLD}❄  P A N E L   M A N A G E R  ❄${C_RESET}        ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Add User${C_RESET}                                 ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[2]${C_RESET} ${C_WHITE}Update Panel${C_RESET}                             ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_RED}[3]${C_RESET} ${C_WHITE}Uninstall Panel${C_RESET}                          ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[4]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                        ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
     read -rp "  Select an option [1-4]: " sub_choice
 
