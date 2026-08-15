@@ -60,43 +60,58 @@ configure_wings() {
     echo ""
     echo -e "${C_CYAN:-}== Configure Wings ==${C_RESET:-}"
     echo ""
-    echo "  Steps to get your deploy command:"
-    echo "    1. Log into your Panel as admin"
-    echo "    2. Go to Admin -> Locations -> create a location (if you don't have one)"
-    echo "    3. Go to Admin -> Nodes -> Create New, fill in details, save"
-    echo "    4. Open the new node -> Configuration tab"
-    echo "    5. Copy the full 'wings configure' command shown there"
-    echo "       (starts with something like: sudo wings configure --panel-url ...)"
+
+    if [[ ! -d "${FROSTY_PANEL_DIR:-/var/www/pterodactyl}" ]]; then
+        _frosty_fail "Panel not found — Wings needs an existing Panel with a node created first"
+        return 1
+    fi
+
+    echo "  Fetching nodes from the Panel..."
+    local node_list
+    node_list="$(cd "${FROSTY_PANEL_DIR:-/var/www/pterodactyl}" && php"${FROSTY_PHP_VERSION:-8.3}" artisan p:node:list 2>/dev/null)"
+
+    if [[ -z "$node_list" ]] || ! echo "$node_list" | grep -q "ID"; then
+        _frosty_fail "No nodes found. Create one first in the Panel: Admin -> Nodes -> Create New"
+        return 1
+    fi
+
+    echo "$node_list"
     echo ""
-    read -rp "  Paste the full deploy command here: " deploy_cmd
+    read -rp "  Enter the Node ID to configure Wings for: " node_id
 
-    if [[ -z "$deploy_cmd" ]]; then
-        _frosty_fail "No command entered"
+    if [[ -z "$node_id" ]]; then
+        _frosty_fail "No node ID entered"
         return 1
     fi
 
-    if [[ "$deploy_cmd" != *"wings configure"* ]]; then
-        _frosty_fail "That doesn't look like a 'wings configure' command — please copy it exactly from the node's Configuration tab"
+    echo "    Generating Wings configuration..."
+    local raw_config
+    raw_config="$(cd "${FROSTY_PANEL_DIR:-/var/www/pterodactyl}" && php"${FROSTY_PHP_VERSION:-8.3}" artisan p:node:configuration "$node_id" 2>/dev/null)"
+
+    if [[ -z "$raw_config" ]] || echo "$raw_config" | grep -qi "error\|not enough arguments"; then
+        _frosty_fail "Failed to generate config for node ID $node_id — check the ID is correct"
         return 1
     fi
 
-    deploy_cmd="${deploy_cmd#sudo }"
+    mkdir -p /etc/pterodactyl
 
-    echo "    Running configuration..."
-    if eval "$deploy_cmd" >/tmp/frosty_wings_configure.log 2>&1; then
-        _frosty_ok "Wings configured"
-    else
-        _frosty_fail "Wings configuration command failed — see /tmp/frosty_wings_configure.log"
-        tail -15 /tmp/frosty_wings_configure.log
+    local panel_url="${FROSTY_PANEL_URL:-}"
+    if [[ -z "$panel_url" ]]; then
+        read -rp "  Enter your Panel's public URL (e.g. https://panel.yourdomain.com): " panel_url
+    fi
+
+    echo "$raw_config" | \
+        sed '/ssl:/,/enabled:/{s/enabled: true/enabled: false/}' | \
+        sed "/^remote:/c\\remote: '${panel_url}'" | \
+        sed '/cert:/d; /key:/d' \
+        > "$FROSTY_WINGS_CONFIG"
+
+    if [[ ! -s "$FROSTY_WINGS_CONFIG" ]]; then
+        _frosty_fail "Failed to write config.yml"
         return 1
     fi
 
-    if [[ ! -f "$FROSTY_WINGS_CONFIG" ]]; then
-        _frosty_fail "Expected config not found at ${FROSTY_WINGS_CONFIG} after configure"
-        return 1
-    fi
-
-    _frosty_ok "Config verified at ${FROSTY_WINGS_CONFIG}"
+    _frosty_ok "Wings configuration written to ${FROSTY_WINGS_CONFIG} (SSL disabled, remote set to ${panel_url})"
     return 0
 }
 
@@ -155,7 +170,7 @@ SVCEOF
     fi
 
     local node_ok
-    node_ok="$(curl -s -o /dev/null -w '%{http_code}' -k https://localhost:8080/api/system 2>/dev/null)"
+    node_ok="$(curl -s -o /dev/null -w '%{http_code}' -k http://localhost:8080/api/system 2>/dev/null)"
     if [[ "$node_ok" == "200" || "$node_ok" == "401" || "$node_ok" == "403" ]]; then
         _frosty_ok "Wings API responding on :8080"
     else
@@ -259,7 +274,7 @@ show_wings_submenu() {
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}        ${C_ICE}${C_BOLD}❄  W I N G S   M A N A G E R  ❄${C_RESET}        ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Reconfigure (new node token)${C_RESET}             ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Reconfigure (new node)${C_RESET}                   ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[2]${C_RESET} ${C_WHITE}Update Wings${C_RESET}                             ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_RED}[3]${C_RESET} ${C_WHITE}Uninstall Wings${C_RESET}                          ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[4]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                        ${C_FROST}${C_BOLD}║${C_RESET}"
