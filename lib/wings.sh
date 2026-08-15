@@ -255,16 +255,16 @@ wings_uninstall() {
 show_wings_submenu() {
     clear
     print_banner
-    echo -e "${C_CYAN}╔══════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_CYAN}║        ❄  W I N G S   M A N A G E R  ❄        ║${C_RESET}"
-    echo -e "${C_CYAN}╠══════════════════════════════════════════════╣${C_RESET}"
-    echo -e "${C_CYAN}║                                                ║${C_RESET}"
-    echo -e "${C_CYAN}║  [1] Reconfigure (new node token)             ║${C_RESET}"
-    echo -e "${C_CYAN}║  [2] Update Wings                             ║${C_RESET}"
-    echo -e "${C_CYAN}║  [3] Uninstall Wings                          ║${C_RESET}"
-    echo -e "${C_CYAN}║  [4] Back to Main Menu                        ║${C_RESET}"
-    echo -e "${C_CYAN}║                                                ║${C_RESET}"
-    echo -e "${C_CYAN}╚══════════════════════════════════════════════╝${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}        ${C_ICE}${C_BOLD}❄  W I N G S   M A N A G E R  ❄${C_RESET}        ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Reconfigure (new node token)${C_RESET}             ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[2]${C_RESET} ${C_WHITE}Update Wings${C_RESET}                             ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_RED}[3]${C_RESET} ${C_WHITE}Uninstall Wings${C_RESET}                          ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[4]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                        ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
     read -rp "  Select an option [1-4]: " sub_choice
 
