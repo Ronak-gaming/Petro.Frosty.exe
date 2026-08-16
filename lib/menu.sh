@@ -9,7 +9,7 @@ show_main_menu() {
     echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Pterodactyl (Panel / Wings)${C_RESET}              ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[2]${C_RESET} ${C_WHITE}Cloudflare${C_RESET}                               ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[2]${C_RESET} ${C_WHITE}Toolbox${C_RESET}                                  ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[3]${C_RESET} ${C_WHITE}VPS Installer${C_RESET}                            ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[4]${C_RESET} ${C_WHITE}Repair / Start All Services${C_RESET}              ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_RED}[5]${C_RESET} ${C_WHITE}Exit${C_RESET}                                     ${C_FROST}${C_BOLD}║${C_RESET}"
@@ -24,14 +24,8 @@ show_main_menu() {
 
     case "$frosty_choice" in
         1) show_pterodactyl_menu ;;
-        2) run_cloudflare_flow ;;
-        3)
-            if [[ -e /dev/kvm ]]; then
-                load_module "vps.sh"; show_vps_submenu
-            else
-                load_module "vps_docker.sh"; show_vps_docker_submenu
-            fi
-            ;;
+        2) load_module "toolbox.sh"; show_toolbox_menu ;;
+        3) show_vps_type_menu ;;
         4) load_module "repair.sh"; repair_all_services ;;
         5) echo -e "${C_CYAN}Goodbye.${C_RESET}"; exit 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
@@ -40,6 +34,29 @@ show_main_menu() {
     echo ""
     read -rp "  Press Enter to return to the main menu..." _
     show_main_menu
+}
+
+show_vps_type_menu() {
+    clear
+    print_banner
+    echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}        ${C_ICE}${C_BOLD}❄  V P S   I N S T A L L E R  ❄${C_RESET}        ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}KVM VPS${C_RESET}                                  ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[2]${C_RESET} ${C_WHITE}Docker VPS${C_RESET}                               ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[3]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                        ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
+    echo ""
+    read -rp "  Select an option [1-3]: " vt_choice
+
+    case "$vt_choice" in
+        1) load_module "vps.sh"; show_vps_kvm_menu ;;
+        2) load_module "vps_docker.sh"; show_vps_docker_menu ;;
+        3) return 0 ;;
+        *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
+    esac
 }
 
 show_pterodactyl_menu() {
@@ -156,7 +173,7 @@ run_wings_flow() {
     if ! cloudflare_configured; then
         echo ""
         echo -e "${C_YELLOW}Cloudflare must be connected before installing Wings.${C_RESET}"
-        echo -e "${C_YELLOW}Go to [2] Cloudflare on the main menu first, then come back here.${C_RESET}"
+        echo -e "${C_YELLOW}Go to Toolbox -> Cloudflare on the main menu first, then come back here.${C_RESET}"
         return 1
     fi
     _frosty_ok "Cloudflare connection verified"
