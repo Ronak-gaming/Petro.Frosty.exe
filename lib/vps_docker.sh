@@ -170,6 +170,7 @@ vps_docker_create() {
     docker exec "frosty-vps-${vm_name}" bash -c "
         apt update -y >/dev/null 2>&1
         apt install -y openssh-server sudo curl >/dev/null 2>&1
+        apt install -y neofetch >/dev/null 2>&1 || apt install -y screenfetch >/dev/null 2>&1
         mkdir -p /run/sshd /root/.ssh
         echo 'root:${vm_pass}' | chpasswd
         echo '${pubkey}' >> /root/.ssh/authorized_keys
