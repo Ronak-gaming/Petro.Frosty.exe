@@ -139,18 +139,6 @@ vps_docker_create() {
         return 1
     fi
 
-    read -rp "  SSH port to expose on host (e.g. 2201): " vm_sshport
-    vm_sshport="$(echo "$vm_sshport" | tr -cd '0-9')"
-    if [[ -z "$vm_sshport" ]]; then
-        _frosty_fail "SSH port is required"
-        return 1
-    fi
-
-    if docker ps -a --format '{{.Ports}}' | grep -q "0.0.0.0:${vm_sshport}->"; then
-        _frosty_fail "Port ${vm_sshport} is already in use by another container"
-        return 1
-    fi
-
     read -rp "  Set root password: " vm_pass
     if [[ -z "$vm_pass" ]]; then
         _frosty_fail "Root password is required"
@@ -169,7 +157,6 @@ vps_docker_create() {
         --hostname "$vm_name" \
         --memory "${vm_ram}m" \
         --cpus "$vm_cpu" \
-        -p "${vm_sshport}:22" \
         --restart unless-stopped \
         "$docker_img" sleep infinity >/tmp/frosty_vps_docker_run.log 2>&1
 
@@ -201,7 +188,6 @@ vps_docker_create() {
 
     cat > "${FROSTY_VPS_DOCKER_DIR}/${vm_name}.meta" << METAEOF
 image=${img_key}
-ssh_port=${vm_sshport}
 container=frosty-vps-${vm_name}
 created=$(date '+%Y-%m-%d %H:%M:%S')
 METAEOF
@@ -220,7 +206,7 @@ METAEOF
 vps_docker_list() {
     echo ""
     echo "== VPS Instances (Docker) =="
-    docker ps -a --filter "name=frosty-vps-" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+    docker ps -a --filter "name=frosty-vps-" --format "table {{.Names}}\t{{.Status}}"
 }
 
 vps_docker_start() {
