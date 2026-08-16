@@ -342,9 +342,6 @@ METAEOF
     fi
 
     echo ""
-    echo -e "    ${C_CYAN:-}VM ready. Access it via:${C_RESET:-}"
-    echo -e "    ${C_CYAN:-}  ssh root@$(curl -s ifconfig.me 2>/dev/null || echo YOUR_HOST_IP) -p ${vm_sshport}${C_RESET:-}"
-    echo ""
     echo "  Share this VM now? [1] tmate  [2] sshx  [3] Skip"
     read -rp "  Choice [1-3]: " share_now
     case "$share_now" in
@@ -742,59 +739,6 @@ vps_rejoin_sshx() {
     fi
 }
 
-vps_expose_ssh() {
-    echo ""
-    echo -e "${C_CYAN:-}== Expose VPS SSH via Cloudflare Tunnel ==${C_RESET:-}"
-    read -rp "  VM name to expose: " vm_name
-    local vm_ip
-    vm_ip="$(_frosty_vps_ip "$vm_name")"
-    if [[ -z "$vm_ip" ]]; then
-        _frosty_fail "No IP on record for '$vm_name'"
-        return 1
-    fi
-
-    if ! command -v cloudflared >/dev/null 2>&1; then
-        _frosty_fail "cloudflared not installed — go to Toolbox -> Cloudflare on the main menu first"
-        return 1
-    fi
-
-    local cf_marker="${HOME}/.frosty_cloudflare_configured"
-    if [[ ! -f "$cf_marker" ]]; then
-        _frosty_fail "No Cloudflare tunnel connected — go to Toolbox -> Cloudflare on the main menu first"
-        return 1
-    fi
-
-    read -rp "  Enter the SSH hostname you want (e.g. ssh-${vm_name}.yourdomain.com): " ssh_fqdn
-    if [[ -z "$ssh_fqdn" ]]; then
-        _frosty_fail "No hostname entered"
-        return 1
-    fi
-
-    ssh_fqdn="${ssh_fqdn%/}"
-    ssh_fqdn="${ssh_fqdn#http://}"
-    ssh_fqdn="${ssh_fqdn#https://}"
-
-    echo ""
-    echo -e "${C_YELLOW:-}Now go to your Cloudflare Tunnel dashboard (one.dash.cloudflare.com${C_RESET:-}"
-    echo -e "${C_YELLOW:-}-> Networks -> Tunnels -> your tunnel -> Public Hostname tab) and add:${C_RESET:-}"
-    echo -e "${C_CYAN:-}    Subdomain/domain: ${ssh_fqdn}${C_RESET:-}"
-    echo -e "${C_CYAN:-}    Service Type: SSH${C_RESET:-}"
-    echo -e "${C_CYAN:-}    URL: ${vm_ip}:22${C_RESET:-}"
-    echo ""
-    read -rp "  Press Enter once you've added that route in Cloudflare..." _
-
-    _frosty_ok "Route configured on Cloudflare's side."
-    echo ""
-    echo -e "    ${C_CYAN:-}Anyone with cloudflared installed can now connect via:${C_RESET:-}"
-    echo -e "    ${C_CYAN:-}  cloudflared access ssh --hostname ${ssh_fqdn}${C_RESET:-}"
-    echo -e "    ${C_YELLOW:-}Or add this to their ~/.ssh/config for plain 'ssh' usage:${C_RESET:-}"
-    echo -e "    ${C_CYAN:-}    Host ${ssh_fqdn}${C_RESET:-}"
-    echo -e "    ${C_CYAN:-}      ProxyCommand cloudflared access ssh --hostname %h${C_RESET:-}"
-    echo ""
-    echo "$ssh_fqdn" >> "${FROSTY_VPS_IMG_DIR}/${vm_name}.meta"
-    return 0
-}
-
 show_vps_kvm_full_menu() {
     clear
     print_banner
@@ -815,12 +759,11 @@ show_vps_kvm_full_menu() {
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[11]${C_RESET} ${C_WHITE}Rejoin tmate Session${C_RESET}                    ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[12]${C_RESET} ${C_WHITE}Share via sshx${C_RESET}                          ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[13]${C_RESET} ${C_WHITE}Rejoin sshx Session${C_RESET}                     ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[14]${C_RESET} ${C_WHITE}Expose SSH via Cloudflare${C_RESET}               ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[15]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                       ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[14]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                       ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-15]: " vps_choice
+    read -rp "  Select an option [1-14]: " vps_choice
 
     case "$vps_choice" in
         1) vps_create ;;
@@ -836,8 +779,7 @@ show_vps_kvm_full_menu() {
         11) vps_rejoin_tmate ;;
         12) vps_share_sshx ;;
         13) vps_rejoin_sshx ;;
-        14) vps_expose_ssh ;;
-        15) return 0 ;;
+        14) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 
