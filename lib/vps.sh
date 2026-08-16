@@ -7,7 +7,7 @@ FROSTY_VPS_SNAP_DIR="${FROSTY_VPS_DIR}/snapshots"
 
 _frosty_vps_check_stack() {
     if ! command -v virsh >/dev/null 2>&1; then
-        _frosty_warn "KVM/libvirt not installed yet — run [1] Set Up VPS first"
+        _frosty_warn "KVM/libvirt not installed yet — run Create VPS first"
         return 1
     fi
     return 0
@@ -62,6 +62,20 @@ install_vps_stack() {
         return 1
     fi
 
+    if ! virsh net-info default >/dev/null 2>&1; then
+        virsh net-define /usr/share/libvirt/networks/default.xml >/dev/null 2>&1
+    fi
+    if ! virsh net-list --name 2>/dev/null | grep -q "^default$"; then
+        virsh net-start default >/dev/null 2>&1
+    fi
+    virsh net-autostart default >/dev/null 2>&1
+    if virsh net-list --name 2>/dev/null | grep -q "^default$"; then
+        _frosty_ok "libvirt default network active"
+    else
+        _frosty_fail "Could not activate libvirt default network"
+        return 1
+    fi
+
     mkdir -p "$FROSTY_VPS_IMG_DIR" "$FROSTY_VPS_SNAP_DIR"
 
     if [[ ! -f "${FROSTY_VPS_DIR}/frosty_vps_key" ]]; then
@@ -91,6 +105,50 @@ _frosty_vps_sshport() {
 
 _frosty_vps_ip() {
     grep '^vm_ip=' "${FROSTY_VPS_IMG_DIR}/$1.meta" 2>/dev/null | cut -d= -f2
+}
+
+vps_kvm_exists_any() {
+    command -v virsh >/dev/null 2>&1 && virsh list --all --name 2>/dev/null | grep -q .
+}
+
+show_vps_kvm_menu() {
+    clear
+    print_banner
+
+    if vps_kvm_exists_any; then
+        show_vps_kvm_full_menu
+        return 0
+    fi
+
+    echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}            ${C_ICE}${C_BOLD}❄  K V M   V P S  ❄${C_RESET}                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Create VPS${C_RESET}                               ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[2]${C_RESET} ${C_WHITE}Back${C_RESET}                                     ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
+    echo ""
+    read -rp "  Select an option [1-2]: " gate_choice
+
+    case "$gate_choice" in
+        1)
+            if ! install_vps_stack; then
+                echo ""
+                echo -e "${C_YELLOW}No KVM detected on this host — switch to Docker VPS instead.${C_RESET}"
+                echo ""
+                read -rp "  Press Enter to continue..." _
+                return 1
+            fi
+            vps_create
+            ;;
+        2) return 0 ;;
+        *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
+    esac
+
+    echo ""
+    read -rp "  Press Enter to continue..." _
+    show_vps_kvm_menu
 }
 
 vps_create() {
@@ -696,13 +754,13 @@ vps_expose_ssh() {
     fi
 
     if ! command -v cloudflared >/dev/null 2>&1; then
-        _frosty_fail "cloudflared not installed — go to [2] Cloudflare on the main menu first"
+        _frosty_fail "cloudflared not installed — go to Toolbox -> Cloudflare on the main menu first"
         return 1
     fi
 
     local cf_marker="${HOME}/.frosty_cloudflare_configured"
     if [[ ! -f "$cf_marker" ]]; then
-        _frosty_fail "No Cloudflare tunnel connected — go to [2] Cloudflare on the main menu first"
+        _frosty_fail "No Cloudflare tunnel connected — go to Toolbox -> Cloudflare on the main menu first"
         return 1
     fi
 
@@ -711,6 +769,10 @@ vps_expose_ssh() {
         _frosty_fail "No hostname entered"
         return 1
     fi
+
+    ssh_fqdn="${ssh_fqdn%/}"
+    ssh_fqdn="${ssh_fqdn#http://}"
+    ssh_fqdn="${ssh_fqdn#https://}"
 
     echo ""
     echo -e "${C_YELLOW:-}Now go to your Cloudflare Tunnel dashboard (one.dash.cloudflare.com${C_RESET:-}"
@@ -733,7 +795,7 @@ vps_expose_ssh() {
     return 0
 }
 
-show_vps_submenu() {
+show_vps_kvm_full_menu() {
     clear
     print_banner
     echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
@@ -761,7 +823,7 @@ show_vps_submenu() {
     read -rp "  Select an option [1-15]: " vps_choice
 
     case "$vps_choice" in
-        1) install_vps_stack && vps_create ;;
+        1) vps_create ;;
         2) vps_list ;;
         3) vps_dashboard ;;
         4) vps_start ;;
@@ -781,5 +843,5 @@ show_vps_submenu() {
 
     echo ""
     read -rp "  Press Enter to continue..." _
-    show_vps_submenu
+    show_vps_kvm_full_menu
 }
