@@ -37,6 +37,49 @@ install_vps_docker_stack() {
     return 0
 }
 
+vps_docker_exists_any() {
+    command -v docker >/dev/null 2>&1 && docker ps -a --filter "name=frosty-vps-" -q 2>/dev/null | grep -q .
+}
+
+show_vps_docker_menu() {
+    clear
+    print_banner
+
+    if vps_docker_exists_any; then
+        show_vps_docker_full_menu
+        return 0
+    fi
+
+    echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}          ${C_ICE}${C_BOLD}❄  D O C K E R   V P S  ❄${C_RESET}          ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Create VPS${C_RESET}                               ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[2]${C_RESET} ${C_WHITE}Back${C_RESET}                                     ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
+    echo ""
+    read -rp "  Select an option [1-2]: " gate_choice
+
+    case "$gate_choice" in
+        1)
+            if ! install_vps_docker_stack; then
+                echo ""
+                echo -e "${C_YELLOW}Docker setup failed on this host.${C_RESET}"
+                echo ""
+                read -rp "  Press Enter to continue..." _
+                return 1
+            fi
+            vps_docker_create
+            ;;
+        2) return 0 ;;
+        *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
+    esac
+
+    echo ""
+    read -rp "  Press Enter to continue..." _
+    show_vps_docker_menu
+}
 _frosty_vps_docker_image() {
     case "$1" in
         ubuntu2604) echo "ubuntu:26.04" ;;
