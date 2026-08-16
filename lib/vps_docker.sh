@@ -37,6 +37,18 @@ install_vps_docker_stack() {
     return 0
 }
 
+_frosty_vps_docker_image() {
+    case "$1" in
+        ubuntu2604) echo "ubuntu:26.04" ;;
+        ubuntu2404) echo "ubuntu:24.04" ;;
+        ubuntu2204) echo "ubuntu:22.04" ;;
+        debian11) echo "debian:11" ;;
+        debian12) echo "debian:12" ;;
+        debian13) echo "debian:13" ;;
+        *) echo "" ;;
+    esac
+}
+
 vps_docker_exists_any() {
     command -v docker >/dev/null 2>&1 && docker ps -a --filter "name=frosty-vps-" -q 2>/dev/null | grep -q .
 }
@@ -79,17 +91,6 @@ show_vps_docker_menu() {
     echo ""
     read -rp "  Press Enter to continue..." _
     show_vps_docker_menu
-}
-_frosty_vps_docker_image() {
-    case "$1" in
-        ubuntu2604) echo "ubuntu:26.04" ;;
-        ubuntu2404) echo "ubuntu:24.04" ;;
-        ubuntu2204) echo "ubuntu:22.04" ;;
-        debian11) echo "debian:11" ;;
-        debian12) echo "debian:12" ;;
-        debian13) echo "debian:13" ;;
-        *) echo "" ;;
-    esac
 }
 
 vps_docker_create() {
@@ -253,37 +254,169 @@ vps_docker_dashboard() {
     docker stats --no-stream --filter "name=frosty-vps-" --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}"
 }
 
-show_vps_docker_submenu() {
+vps_docker_edit_config() {
+    echo ""
+    read -rp "  VPS name to edit: " vm_name
+    if ! docker inspect "frosty-vps-${vm_name}" >/dev/null 2>&1; then
+        _frosty_fail "VPS '$vm_name' not found"
+        return 1
+    fi
+
+    echo "  [1] Change RAM  [2] Change CPU limit"
+    read -rp "  Choice: " edit_choice
+    case "$edit_choice" in
+        1)
+            read -rp "  New RAM in MB: " new_ram
+            new_ram="$(echo "$new_ram" | tr -cd '0-9')"
+            docker update --memory "${new_ram}m" --memory-swap "${new_ram}m" "frosty-vps-${vm_name}" >/dev/null 2>&1
+            _frosty_ok "RAM updated to ${new_ram}MB"
+            ;;
+        2)
+            read -rp "  New CPU limit (cores): " new_cpu
+            new_cpu="$(echo "$new_cpu" | tr -cd '0-9')"
+            docker update --cpus "$new_cpu" "frosty-vps-${vm_name}" >/dev/null 2>&1
+            _frosty_ok "CPU limit updated to ${new_cpu}"
+            ;;
+        *) _frosty_fail "Invalid choice" ;;
+    esac
+}
+
+vps_docker_share_tmate() {
+    echo ""
+    echo "== Share Terminal via tmate =="
+    read -rp "  VPS name to access: " vm_name
+
+    if ! docker inspect "frosty-vps-${vm_name}" >/dev/null 2>&1; then
+        _frosty_fail "VPS '$vm_name' not found"
+        return 1
+    fi
+
+    if ! command -v tmate >/dev/null 2>&1; then
+        echo "    Installing tmate..."
+        DEBIAN_FRONTEND=noninteractive apt-get install -y tmate >/tmp/frosty_tmate_install.log 2>&1
+    fi
+
+    local tmate_sock="/tmp/frosty-tmate-docker-${vm_name}.sock"
+
+    if tmate -S "$tmate_sock" display -p '#{tmate_ssh}' >/dev/null 2>&1; then
+        _frosty_ok "Existing tmate session for '$vm_name' is still alive — reusing it"
+    else
+        echo -e "    ${C_CYAN:-}Starting a new tmate session into VPS '$vm_name'...${C_RESET:-}"
+        rm -f "$tmate_sock"
+        tmate -S "$tmate_sock" -f /dev/null new-session -d -n frosty-vps-docker "docker exec -it frosty-vps-${vm_name} bash -c 'command -v neofetch >/dev/null 2>&1 && neofetch || screenfetch; exec bash -l'"
+        sleep 3
+    fi
+
+    echo ""
+    echo -e "    ${C_YELLOW:-}Anyone with the link/command below gets a live terminal into '$vm_name':${C_RESET:-}"
+    tmate -S "$tmate_sock" display -p '#{tmate_ssh}' 2>/dev/null
+    tmate -S "$tmate_sock" display -p '#{tmate_web}' 2>/dev/null
+}
+
+vps_docker_rejoin_tmate() {
+    echo ""
+    echo "== Rejoin Existing tmate Session =="
+    read -rp "  VPS name: " vm_name
+    local tmate_sock="/tmp/frosty-tmate-docker-${vm_name}.sock"
+
+    if [[ ! -S "$tmate_sock" ]] || ! tmate -S "$tmate_sock" display -p '#{tmate_ssh}' >/dev/null 2>&1; then
+        _frosty_warn "No active tmate session found for '$vm_name' — starting a new one instead"
+        rm -f "$tmate_sock"
+        vps_docker_share_tmate
+        return 0
+    fi
+
+    echo -e "    ${C_CYAN:-}Session is alive. Sharing details for '$vm_name':${C_RESET:-}"
+    tmate -S "$tmate_sock" display -p '#{tmate_ssh}'
+    tmate -S "$tmate_sock" display -p '#{tmate_web}'
+}
+
+vps_docker_expose_ssh() {
+    echo ""
+    echo -e "${C_CYAN:-}== Expose VPS SSH via Cloudflare Tunnel ==${C_RESET:-}"
+    read -rp "  VPS name to expose: " vm_name
+
+    if ! docker inspect "frosty-vps-${vm_name}" >/dev/null 2>&1; then
+        _frosty_fail "VPS '$vm_name' not found"
+        return 1
+    fi
+
+    if ! command -v cloudflared >/dev/null 2>&1; then
+        _frosty_fail "cloudflared not installed — go to Toolbox -> Cloudflare on the main menu first"
+        return 1
+    fi
+
+    local cf_marker="${HOME}/.frosty_cloudflare_configured"
+    if [[ ! -f "$cf_marker" ]]; then
+        _frosty_fail "No Cloudflare tunnel connected — go to Toolbox -> Cloudflare on the main menu first"
+        return 1
+    fi
+
+    local ssh_port
+    ssh_port="$(grep '^ssh_port=' "${FROSTY_VPS_DOCKER_DIR}/${vm_name}.meta" 2>/dev/null | cut -d= -f2)"
+
+    read -rp "  Enter the SSH hostname you want (e.g. ssh-${vm_name}.yourdomain.com): " ssh_fqdn
+    if [[ -z "$ssh_fqdn" ]]; then
+        _frosty_fail "No hostname entered"
+        return 1
+    fi
+    ssh_fqdn="${ssh_fqdn%/}"
+    ssh_fqdn="${ssh_fqdn#http://}"
+    ssh_fqdn="${ssh_fqdn#https://}"
+
+    echo ""
+    echo -e "${C_YELLOW:-}Now go to your Cloudflare Tunnel dashboard (one.dash.cloudflare.com${C_RESET:-}"
+    echo -e "${C_YELLOW:-}-> Networks -> Tunnels -> your tunnel -> Public Hostname tab) and add:${C_RESET:-}"
+    echo -e "${C_CYAN:-}    Subdomain/domain: ${ssh_fqdn}${C_RESET:-}"
+    echo -e "${C_CYAN:-}    Service Type: SSH${C_RESET:-}"
+    echo -e "${C_CYAN:-}    URL: localhost:${ssh_port}${C_RESET:-}"
+    echo ""
+    read -rp "  Press Enter once you've added that route in Cloudflare..." _
+
+    _frosty_ok "Route configured on Cloudflare's side."
+    echo "$ssh_fqdn" >> "${FROSTY_VPS_DOCKER_DIR}/${vm_name}.meta"
+    return 0
+}
+
+show_vps_docker_full_menu() {
     clear
     print_banner
     echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}   ${C_ICE}${C_BOLD}❄  V P S   ( D O C K E R   M O D E )  ❄${C_RESET}   ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Set Up VPS${C_RESET}                               ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[2]${C_RESET} ${C_WHITE}List VPS${C_RESET}                                 ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[3]${C_RESET} ${C_WHITE}Resource Dashboard${C_RESET}                       ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_GREEN}[4]${C_RESET} ${C_WHITE}Start VPS${C_RESET}                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_YELLOW}[5]${C_RESET} ${C_WHITE}Stop VPS${C_RESET}                                 ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_RED}[6]${C_RESET} ${C_WHITE}Delete VPS${C_RESET}                               ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[7]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                        ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET}  ${C_WHITE}Set Up VPS${C_RESET}                              ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[2]${C_RESET}  ${C_WHITE}List VPS${C_RESET}                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[3]${C_RESET}  ${C_WHITE}Resource Dashboard${C_RESET}                      ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_GREEN}[4]${C_RESET}  ${C_WHITE}Start VPS${C_RESET}                               ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_YELLOW}[5]${C_RESET}  ${C_WHITE}Stop VPS${C_RESET}                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[6]${C_RESET}  ${C_WHITE}Edit VPS Config${C_RESET}                         ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_RED}[7]${C_RESET}  ${C_WHITE}Delete VPS${C_RESET}                              ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[8]${C_RESET}  ${C_WHITE}Share via tmate${C_RESET}                         ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[9]${C_RESET}  ${C_WHITE}Rejoin tmate Session${C_RESET}                    ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[10]${C_RESET} ${C_WHITE}Expose SSH via Cloudflare${C_RESET}               ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[11]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                       ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-7]: " vps_choice
+    read -rp "  Select an option [1-11]: " vps_choice
 
     case "$vps_choice" in
-        1) install_vps_docker_stack && vps_docker_create ;;
+        1) vps_docker_create ;;
         2) vps_docker_list ;;
         3) vps_docker_dashboard ;;
         4) vps_docker_start ;;
         5) vps_docker_stop ;;
-        6) vps_docker_delete ;;
-        7) return 0 ;;
+        6) vps_docker_edit_config ;;
+        7) vps_docker_delete ;;
+        8) vps_docker_share_tmate ;;
+        9) vps_docker_rejoin_tmate ;;
+        10) vps_docker_expose_ssh ;;
+        11) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 
     echo ""
     read -rp "  Press Enter to continue..." _
-    show_vps_docker_submenu
+    show_vps_docker_full_menu
 }
