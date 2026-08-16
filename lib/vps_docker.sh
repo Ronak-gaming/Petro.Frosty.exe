@@ -146,6 +146,11 @@ vps_docker_create() {
         return 1
     fi
 
+    if docker ps -a --format '{{.Ports}}' | grep -q "0.0.0.0:${vm_sshport}->"; then
+        _frosty_fail "Port ${vm_sshport} is already in use by another container"
+        return 1
+    fi
+
     read -rp "  Set root password: " vm_pass
     if [[ -z "$vm_pass" ]]; then
         _frosty_fail "Root password is required"
@@ -202,8 +207,13 @@ created=$(date '+%Y-%m-%d %H:%M:%S')
 METAEOF
 
     echo ""
-    echo -e "    ${C_CYAN:-}VPS ready. Access it via:${C_RESET:-}"
-    echo -e "    ${C_CYAN:-}  ssh root@$(curl -s ifconfig.me 2>/dev/null || echo YOUR_HOST_IP) -p ${vm_sshport}${C_RESET:-}"
+    echo "  Share this VPS now? [1] tmate  [2] Skip"
+    read -rp "  Choice [1-2]: " share_now
+    case "$share_now" in
+        1) vps_docker_share_tmate <<< "$vm_name" ;;
+        *) : ;;
+    esac
+
     return 0
 }
 
@@ -331,53 +341,6 @@ vps_docker_rejoin_tmate() {
     tmate -S "$tmate_sock" display -p '#{tmate_web}'
 }
 
-vps_docker_expose_ssh() {
-    echo ""
-    echo -e "${C_CYAN:-}== Expose VPS SSH via Cloudflare Tunnel ==${C_RESET:-}"
-    read -rp "  VPS name to expose: " vm_name
-
-    if ! docker inspect "frosty-vps-${vm_name}" >/dev/null 2>&1; then
-        _frosty_fail "VPS '$vm_name' not found"
-        return 1
-    fi
-
-    if ! command -v cloudflared >/dev/null 2>&1; then
-        _frosty_fail "cloudflared not installed — go to Toolbox -> Cloudflare on the main menu first"
-        return 1
-    fi
-
-    local cf_marker="${HOME}/.frosty_cloudflare_configured"
-    if [[ ! -f "$cf_marker" ]]; then
-        _frosty_fail "No Cloudflare tunnel connected — go to Toolbox -> Cloudflare on the main menu first"
-        return 1
-    fi
-
-    local ssh_port
-    ssh_port="$(grep '^ssh_port=' "${FROSTY_VPS_DOCKER_DIR}/${vm_name}.meta" 2>/dev/null | cut -d= -f2)"
-
-    read -rp "  Enter the SSH hostname you want (e.g. ssh-${vm_name}.yourdomain.com): " ssh_fqdn
-    if [[ -z "$ssh_fqdn" ]]; then
-        _frosty_fail "No hostname entered"
-        return 1
-    fi
-    ssh_fqdn="${ssh_fqdn%/}"
-    ssh_fqdn="${ssh_fqdn#http://}"
-    ssh_fqdn="${ssh_fqdn#https://}"
-
-    echo ""
-    echo -e "${C_YELLOW:-}Now go to your Cloudflare Tunnel dashboard (one.dash.cloudflare.com${C_RESET:-}"
-    echo -e "${C_YELLOW:-}-> Networks -> Tunnels -> your tunnel -> Public Hostname tab) and add:${C_RESET:-}"
-    echo -e "${C_CYAN:-}    Subdomain/domain: ${ssh_fqdn}${C_RESET:-}"
-    echo -e "${C_CYAN:-}    Service Type: SSH${C_RESET:-}"
-    echo -e "${C_CYAN:-}    URL: localhost:${ssh_port}${C_RESET:-}"
-    echo ""
-    read -rp "  Press Enter once you've added that route in Cloudflare..." _
-
-    _frosty_ok "Route configured on Cloudflare's side."
-    echo "$ssh_fqdn" >> "${FROSTY_VPS_DOCKER_DIR}/${vm_name}.meta"
-    return 0
-}
-
 show_vps_docker_full_menu() {
     clear
     print_banner
@@ -394,12 +357,11 @@ show_vps_docker_full_menu() {
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_RED}[7]${C_RESET}  ${C_WHITE}Delete VPS${C_RESET}                              ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[8]${C_RESET}  ${C_WHITE}Share via tmate${C_RESET}                         ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[9]${C_RESET}  ${C_WHITE}Rejoin tmate Session${C_RESET}                    ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[10]${C_RESET} ${C_WHITE}Expose SSH via Cloudflare${C_RESET}               ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[11]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                       ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[10]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                       ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-11]: " vps_choice
+    read -rp "  Select an option [1-10]: " vps_choice
 
     case "$vps_choice" in
         1) vps_docker_create ;;
@@ -411,8 +373,7 @@ show_vps_docker_full_menu() {
         7) vps_docker_delete ;;
         8) vps_docker_share_tmate ;;
         9) vps_docker_rejoin_tmate ;;
-        10) vps_docker_expose_ssh ;;
-        11) return 0 ;;
+        10) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 
