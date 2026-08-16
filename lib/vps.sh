@@ -99,10 +99,6 @@ _frosty_vps_image_url() {
     esac
 }
 
-_frosty_vps_sshport() {
-    grep '^ssh_port=' "${FROSTY_VPS_IMG_DIR}/$1.meta" 2>/dev/null | cut -d= -f2
-}
-
 _frosty_vps_ip() {
     grep '^vm_ip=' "${FROSTY_VPS_IMG_DIR}/$1.meta" 2>/dev/null | cut -d= -f2
 }
@@ -202,13 +198,6 @@ vps_create() {
         return 1
     fi
 
-    read -rp "  SSH port to forward on host (e.g. 2201): " vm_sshport
-    vm_sshport="$(echo "$vm_sshport" | tr -cd '0-9')"
-    if [[ -z "$vm_sshport" ]]; then
-        _frosty_fail "SSH port is required"
-        return 1
-    fi
-
     read -rp "  Set root password for the VM: " vm_pass
     if [[ -z "$vm_pass" ]]; then
         _frosty_fail "Root password is required"
@@ -263,6 +252,16 @@ CIEOF
 
     genisoimage -output "$seed_iso" -volid cidata -joliet -rock "${cloud_dir}/user-data" "${cloud_dir}/meta-data" >/tmp/frosty_vps_iso.log 2>&1
 
+    if [[ ! -S /run/libvirt/virtlogd-sock ]]; then
+        mkdir -p /run/libvirt
+        virtlogd -d >/tmp/frosty_virtlogd.log 2>&1 &
+        sleep 2
+    fi
+    if ! virsh list >/dev/null 2>&1; then
+        service libvirtd start >/dev/null 2>&1 || (libvirtd -d >/tmp/frosty_libvirtd.log 2>&1 &)
+        sleep 2
+    fi
+
     echo "    Creating VM..."
     if virt-install \
         --name "$vm_name" \
@@ -295,12 +294,8 @@ CIEOF
     fi
     _frosty_ok "VM IP: ${vm_ip}"
 
-    iptables -t nat -A PREROUTING -p tcp --dport "${vm_sshport}" -j DNAT --to-destination "${vm_ip}:22" -m comment --comment "frosty-${vm_name}-ssh"
-    iptables -A FORWARD -p tcp -d "${vm_ip}" --dport 22 -j ACCEPT -m comment --comment "frosty-${vm_name}-ssh"
-
     cat > "${FROSTY_VPS_IMG_DIR}/${vm_name}.meta" << METAEOF
 image=${img_key}
-ssh_port=${vm_sshport}
 vm_ip=${vm_ip}
 created=$(date '+%Y-%m-%d %H:%M:%S')
 METAEOF
@@ -392,9 +387,6 @@ vps_dashboard() {
     done <<< "$vms"
 
     echo ""
-    if command -v virt-top >/dev/null 2>&1; then
-        echo "  (Run 'virt-top' manually for live CPU/RAM usage graphs)"
-    fi
 }
 
 vps_start() {
@@ -469,20 +461,6 @@ vps_delete() {
     fi
     virsh destroy "$vm_name" >/dev/null 2>&1
     virsh undefine "$vm_name" --remove-all-storage >/tmp/frosty_vps_delete.log 2>&1
-
-    for chain in PREROUTING; do
-        while iptables -t nat -L "$chain" -n --line-numbers | grep -q "frosty-${vm_name}-"; do
-            local ln
-            ln="$(iptables -t nat -L "$chain" -n --line-numbers | grep "frosty-${vm_name}-" | head -1 | awk '{print $1}')"
-            iptables -t nat -D "$chain" "$ln" 2>/dev/null
-        done
-    done
-    while iptables -L FORWARD -n --line-numbers | grep -q "frosty-${vm_name}-"; do
-        local ln
-        ln="$(iptables -L FORWARD -n --line-numbers | grep "frosty-${vm_name}-" | head -1 | awk '{print $1}')"
-        iptables -D FORWARD "$ln" 2>/dev/null
-    done
-
     rm -rf "${FROSTY_VPS_IMG_DIR}/${vm_name}-cloudinit" "${FROSTY_VPS_IMG_DIR}/${vm_name}-seed.iso" "${FROSTY_VPS_IMG_DIR}/${vm_name}.meta"
     rm -rf "${FROSTY_VPS_SNAP_DIR}/${vm_name}"
     _frosty_ok "'$vm_name' deleted"
@@ -580,11 +558,11 @@ vps_firewall_add() {
     local vm_ip
     vm_ip="$(_frosty_vps_ip "$vm_name")"
     if [[ -z "$vm_ip" ]]; then
-        _frosty_fail "No IP on record for '$vm_name' — was it created with the current script version?"
+        _frosty_fail "No IP on record for '$vm_name'"
         return 1
     fi
 
-    read -rp "  Additional host port to forward (e.g. 25565): " new_port
+    read -rp "  Host port to forward (e.g. 25565): " new_port
     read -rp "  Guest port (usually same, e.g. 25565): " guest_port
     guest_port="${guest_port:-$new_port}"
     read -rp "  Protocol (tcp/udp) [tcp]: " proto
