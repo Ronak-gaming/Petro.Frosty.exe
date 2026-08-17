@@ -13,7 +13,14 @@ _frosty_vps_check_stack() {
     return 0
 }
 
+_frosty_vps_fix_kvm_perms() {
+    if [[ -e /dev/kvm ]]; then
+        chmod 666 /dev/kvm 2>/dev/null
+    fi
+}
+
 _frosty_vps_ensure_libvirt_running() {
+    _frosty_vps_fix_kvm_perms
     if virsh list >/dev/null 2>&1; then
         return 0
     fi
@@ -24,6 +31,7 @@ _frosty_vps_ensure_libvirt_running() {
     sleep 2
     service libvirtd start >/dev/null 2>&1 || (libvirtd -d >/tmp/frosty_libvirtd.log 2>&1 &)
     sleep 2
+    _frosty_vps_fix_kvm_perms
     if virsh list >/dev/null 2>&1; then
         return 0
     fi
@@ -39,6 +47,8 @@ install_vps_stack() {
         return 1
     fi
     _frosty_ok "/dev/kvm present"
+
+    _frosty_vps_fix_kvm_perms
 
     local pkgs=(qemu-kvm libvirt-daemon-system libvirt-clients virtinst cloud-image-utils genisoimage bridge-utils iptables)
     local missing=()
@@ -58,6 +68,14 @@ install_vps_stack() {
     else
         _frosty_ok "Libvirt/QEMU stack already installed"
     fi
+
+    # Ensure /dev/kvm permission fix survives future boots via udev rule
+    if [[ ! -f /etc/udev/rules.d/99-frosty-kvm.rules ]]; then
+        echo 'KERNEL=="kvm", MODE="0666"' > /etc/udev/rules.d/99-frosty-kvm.rules
+        udevadm control --reload-rules >/dev/null 2>&1
+        udevadm trigger >/dev/null 2>&1
+    fi
+    _frosty_vps_fix_kvm_perms
 
     if [[ -d /run/systemd/system ]]; then
         systemctl enable --now virtlogd >/dev/null 2>&1
