@@ -101,17 +101,34 @@ install_php() {
         fi
     fi
 
-    local missing_ext=()
+local missing_ext=()
     for ext in "${FROSTY_PHP_REQUIRED_EXT[@]}"; do
         if ! "php${FROSTY_PHP_VERSION}" -m 2>/dev/null | grep -qi "^${ext}$"; then
             missing_ext+=("$ext")
         fi
     done
 
+    if [[ ${#missing_ext[@]} -gt 0 ]]; then
+        _frosty_warn "Missing PHP extensions detected: ${missing_ext[*]} — reinstalling explicitly"
+        DEBIAN_FRONTEND=noninteractive apt-get update -y >/tmp/frosty_php_ext_retry.log 2>&1
+        local ext_pkgs=()
+        for ext in "${missing_ext[@]}"; do
+            ext_pkgs+=("php${FROSTY_PHP_VERSION}-${ext}")
+        done
+        DEBIAN_FRONTEND=noninteractive apt-get install -y "${ext_pkgs[@]}" >>/tmp/frosty_php_ext_retry.log 2>&1
+
+        missing_ext=()
+        for ext in "${FROSTY_PHP_REQUIRED_EXT[@]}"; do
+            if ! "php${FROSTY_PHP_VERSION}" -m 2>/dev/null | grep -qi "^${ext}$"; then
+                missing_ext+=("$ext")
+            fi
+        done
+    fi
+
     if [[ ${#missing_ext[@]} -eq 0 ]]; then
         _frosty_ok "All required PHP extensions loaded"
     else
-        _frosty_fail "Missing PHP extensions: ${missing_ext[*]}"
+        _frosty_fail "Missing PHP extensions after retry: ${missing_ext[*]} — see /tmp/frosty_php_ext_retry.log"
         return 1
     fi
 
