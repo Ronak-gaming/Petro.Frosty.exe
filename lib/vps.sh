@@ -13,6 +13,23 @@ _frosty_vps_check_stack() {
     return 0
 }
 
+_frosty_vps_ensure_libvirt_running() {
+    if virsh list >/dev/null 2>&1; then
+        return 0
+    fi
+    pkill -f virtlogd >/dev/null 2>&1
+    rm -f /run/libvirt/virtlogd-sock
+    mkdir -p /run/libvirt
+    virtlogd -d >/tmp/frosty_virtlogd.log 2>&1 &
+    sleep 2
+    service libvirtd start >/dev/null 2>&1 || (libvirtd -d >/tmp/frosty_libvirtd.log 2>&1 &)
+    sleep 2
+    if virsh list >/dev/null 2>&1; then
+        return 0
+    fi
+    return 1
+}
+
 install_vps_stack() {
     echo ""
     echo "== Installing KVM/Libvirt Stack =="
@@ -45,22 +62,13 @@ install_vps_stack() {
     if [[ -d /run/systemd/system ]]; then
         systemctl enable --now virtlogd >/dev/null 2>&1
         systemctl enable --now libvirtd >/dev/null 2>&1
-    else
-        if [[ ! -S /run/libvirt/virtlogd-sock ]]; then
-            mkdir -p /run/libvirt
-            virtlogd -d >/tmp/frosty_virtlogd.log 2>&1 &
-            sleep 2
-        fi
-        service libvirtd start >/dev/null 2>&1 || (libvirtd -d >/tmp/frosty_libvirtd.log 2>&1 &)
-        sleep 2
     fi
 
-    if virsh list >/dev/null 2>&1; then
-        _frosty_ok "libvirtd responding"
-    else
-        _frosty_fail "libvirtd not responding"
+    if ! _frosty_vps_ensure_libvirt_running; then
+        _frosty_fail "libvirtd/virtlogd could not be started"
         return 1
     fi
+    _frosty_ok "libvirtd responding"
 
     if ! virsh net-info default >/dev/null 2>&1; then
         virsh net-define /usr/share/libvirt/networks/default.xml >/dev/null 2>&1
@@ -151,6 +159,12 @@ vps_create() {
     echo ""
     echo -e "${C_CYAN:-}== Create New VPS ==${C_RESET:-}"
     echo ""
+
+    if ! _frosty_vps_ensure_libvirt_running; then
+        _frosty_fail "libvirtd/virtlogd is not running and could not be restarted"
+        return 1
+    fi
+
     read -rp "  VM name (e.g. client1-vps): " vm_name
     [[ -z "$vm_name" ]] && { _frosty_fail "Name required"; return 1; }
 
@@ -252,17 +266,8 @@ CIEOF
 
     genisoimage -output "$seed_iso" -volid cidata -joliet -rock "${cloud_dir}/user-data" "${cloud_dir}/meta-data" >/tmp/frosty_vps_iso.log 2>&1
 
-  if ! virsh list >/dev/null 2>&1; then
-        pkill -f virtlogd >/dev/null 2>&1
-        rm -f /run/libvirt/virtlogd-sock
-        mkdir -p /run/libvirt
-        virtlogd -d >/tmp/frosty_virtlogd.log 2>&1 &
-        sleep 2
-        service libvirtd start >/dev/null 2>&1 || (libvirtd -d >/tmp/frosty_libvirtd.log 2>&1 &)
-        sleep 2
-    fi
-    if ! virsh list >/dev/null 2>&1; then
-        _frosty_fail "libvirtd/virtlogd could not be restarted — run Repair from the main menu"
+    if ! _frosty_vps_ensure_libvirt_running; then
+        _frosty_fail "libvirtd/virtlogd died right before VM creation and could not be restarted"
         return 1
     fi
 
