@@ -56,14 +56,24 @@ install_vps_stack() {
         dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p")
     done
 
-    if [[ ${#missing[@]} -gt 0 ]]; then
+ if [[ ${#missing[@]} -gt 0 ]]; then
         echo "    Installing: ${missing[*]}"
+        apt-get clean >/dev/null 2>&1
+        rm -rf /var/cache/apt/archives/partial/* 2>/dev/null
         DEBIAN_FRONTEND=noninteractive apt-get update -y >/tmp/frosty_vps_apt.log 2>&1
+
         if DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}" >>/tmp/frosty_vps_apt.log 2>&1; then
             _frosty_ok "Libvirt/QEMU stack installed"
         else
-            _frosty_fail "Install failed — see /tmp/frosty_vps_apt.log"
-            return 1
+            _frosty_warn "First install attempt failed (often a transient /tmp issue) — retrying once..."
+            apt-get clean >/dev/null 2>&1
+            DEBIAN_FRONTEND=noninteractive apt-get install -f -y >>/tmp/frosty_vps_apt.log 2>&1
+            if DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}" >>/tmp/frosty_vps_apt.log 2>&1; then
+                _frosty_ok "Libvirt/QEMU stack installed (on retry)"
+            else
+                _frosty_fail "Install failed after retry — see /tmp/frosty_vps_apt.log"
+                return 1
+            fi
         fi
     else
         _frosty_ok "Libvirt/QEMU stack already installed"
