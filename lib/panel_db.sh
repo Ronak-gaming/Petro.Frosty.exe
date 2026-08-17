@@ -7,13 +7,10 @@ configure_panel_database() {
 
     cd "${FROSTY_PANEL_DIR}" || { _frosty_fail "Cannot cd into ${FROSTY_PANEL_DIR}"; return 1; }
 
-    # Check if DB already configured in .env with a real password
     local existing_db_pass
     existing_db_pass="$(grep -E '^DB_PASSWORD=' .env 2>/dev/null | cut -d= -f2-)"
 
-    if [[ -n "$existing_db_pass" ]]; then
-        _frosty_ok "Database credentials already present in .env — skipping DB/user creation"
-    else
+    if [[ -z "$existing_db_pass" ]]; then
         local db_pass
         db_pass="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24)"
 
@@ -32,7 +29,6 @@ SQL
             return 1
         fi
 
-        # Write DB config into .env (never into git)
         sed -i \
             -e "s/^DB_HOST=.*/DB_HOST=127.0.0.1/" \
             -e "s/^DB_PORT=.*/DB_PORT=3306/" \
@@ -43,6 +39,33 @@ SQL
 
         _frosty_ok "Database credentials written to .env"
         echo -e "    ${C_YELLOW:-}Generated DB password (save this if needed): ${db_pass}${C_RESET:-}"
+        existing_db_pass="$db_pass"
+    else
+        _frosty_ok "Database credentials already present in .env"
+    fi
+
+    # Self-heal: verify the live MySQL user's password actually matches .env.
+    # This catches drift from uninstall/reinstall cycles or manual DB changes.
+    echo "    Verifying database credentials are in sync..."
+    if mysql -u pterodactyl -p"${existing_db_pass}" -h 127.0.0.1 -e "SELECT 1;" panel >/dev/null 2>&1; then
+        _frosty_ok "Database credentials verified working"
+    else
+        _frosty_warn "Database password out of sync with .env — repairing automatically"
+
+        mysql -u root -e "
+            CREATE USER IF NOT EXISTS 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '${existing_db_pass}';
+            ALTER USER 'pterodactyl'@'127.0.0.1' IDENTIFIED BY '${existing_db_pass}';
+            CREATE DATABASE IF NOT EXISTS panel;
+            GRANT ALL PRIVILEGES ON panel.* TO 'pterodactyl'@'127.0.0.1' WITH GRANT OPTION;
+            FLUSH PRIVILEGES;
+        " 2>/tmp/frosty_db_repair.log
+
+        if mysql -u pterodactyl -p"${existing_db_pass}" -h 127.0.0.1 -e "SELECT 1;" panel >/dev/null 2>&1; then
+            _frosty_ok "Database credentials repaired and verified"
+        else
+            _frosty_fail "Could not repair database credentials — see /tmp/frosty_db_repair.log"
+            return 1
+        fi
     fi
 
     echo "    Running migrations..."
