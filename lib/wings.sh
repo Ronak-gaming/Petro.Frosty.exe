@@ -172,7 +172,12 @@ SVCEOF
         _frosty_warn "No systemd — starting Wings manually in background"
         pkill -f "^/usr/local/bin/wings" >/dev/null 2>&1
         cd /etc/pterodactyl || return 1
-        nohup wings >/tmp/frosty_wings_run.log 2>&1 &
+        # FIX: use the full binary path here so it matches the pgrep/pkill
+        # patterns below ("^/usr/local/bin/wings"). Launching bare "wings"
+        # produces a cmdline of just "wings", which never matches that
+        # anchored pattern, so the process check below always reported
+        # failure even when Wings started successfully.
+        nohup /usr/local/bin/wings >/tmp/frosty_wings_run.log 2>&1 &
         disown
         sleep 3
         if pgrep -f "^/usr/local/bin/wings" >/dev/null 2>&1; then
