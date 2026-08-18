@@ -100,7 +100,6 @@ configure_wings() {
         read -rp "  Enter your Panel's public URL (e.g. https://panel.yourdomain.com): " panel_url
     fi
 
-    # Sanitize: strip trailing slash, strip any protocol, re-add https:// cleanly
     panel_url="${panel_url%/}"
     panel_url="${panel_url#http://}"
     panel_url="${panel_url#https://}"
@@ -124,6 +123,10 @@ configure_wings() {
 
     _frosty_ok "Wings configuration written to ${FROSTY_WINGS_CONFIG} (SSL disabled, remote set to ${panel_url})"
     return 0
+}
+
+_frosty_wings_api_port() {
+    grep -A2 "^api:" "$FROSTY_WINGS_CONFIG" 2>/dev/null | grep "port:" | head -1 | awk '{print $2}'
 }
 
 setup_wings_service() {
@@ -170,22 +173,32 @@ SVCEOF
         pkill -f "^/usr/local/bin/wings" >/dev/null 2>&1
         cd /etc/pterodactyl || return 1
         nohup wings >/tmp/frosty_wings_run.log 2>&1 &
+        disown
         sleep 3
         if pgrep -f "^/usr/local/bin/wings" >/dev/null 2>&1; then
             _frosty_ok "Wings running (background process)"
         else
             _frosty_fail "Wings failed to start — see /tmp/frosty_wings_run.log"
-            tail -15 /tmp/frosty_wings_run.log
+            [[ -f /tmp/frosty_wings_run.log ]] && tail -15 /tmp/frosty_wings_run.log
             return 1
         fi
     fi
 
+    local api_port
+    api_port="$(_frosty_wings_api_port)"
+    api_port="${api_port:-8443}"
+
     local node_ok
-    node_ok="$(curl -s -o /dev/null -w '%{http_code}' -k http://localhost:8080/api/system 2>/dev/null)"
+    node_ok="$(curl -s -o /dev/null -w '%{http_code}' -k "https://localhost:${api_port}/api/system" 2>/dev/null)"
     if [[ "$node_ok" == "200" || "$node_ok" == "401" || "$node_ok" == "403" ]]; then
-        _frosty_ok "Wings API responding on :8080"
+        _frosty_ok "Wings API responding on :${api_port}"
     else
-        _frosty_warn "Wings API check on :8080 returned: ${node_ok:-no response} (may still be starting up)"
+        node_ok="$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:${api_port}/api/system" 2>/dev/null)"
+        if [[ "$node_ok" == "200" || "$node_ok" == "401" || "$node_ok" == "403" ]]; then
+            _frosty_ok "Wings API responding on :${api_port}"
+        else
+            _frosty_warn "Wings API check on :${api_port} returned: ${node_ok:-no response} (may still be starting up)"
+        fi
     fi
 
     return 0
@@ -197,6 +210,16 @@ wings_installed() {
 
 wings_reconfigure() {
     configure_wings && setup_wings_service
+}
+
+wings_restart() {
+    echo ""
+    echo "== Restarting Wings =="
+    if [[ ! -f "$FROSTY_WINGS_CONFIG" ]]; then
+        _frosty_fail "No Wings config found — run Reconfigure first"
+        return 1
+    fi
+    setup_wings_service
 }
 
 wings_update() {
@@ -232,22 +255,7 @@ wings_update() {
         return 1
     fi
 
-    if [[ -d /run/systemd/system ]]; then
-        systemctl start wings >/dev/null 2>&1
-        sleep 2
-        if systemctl is-active --quiet wings; then
-            _frosty_ok "Wings restarted successfully"
-        else
-            _frosty_fail "Wings failed to restart after update"
-            return 1
-        fi
-    else
-        cd /etc/pterodactyl || return 1
-        nohup wings >/tmp/frosty_wings_run.log 2>&1 &
-        sleep 2
-        _frosty_ok "Wings restarted (background process)"
-    fi
-
+    setup_wings_service
     return 0
 }
 
@@ -286,19 +294,21 @@ show_wings_submenu() {
     echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Reconfigure (new node)${C_RESET}                   ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[2]${C_RESET} ${C_WHITE}Update Wings${C_RESET}                             ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_RED}[3]${C_RESET} ${C_WHITE}Uninstall Wings${C_RESET}                          ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[4]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                        ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_GREEN}[2]${C_RESET} ${C_WHITE}Restart Wings${C_RESET}                            ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[3]${C_RESET} ${C_WHITE}Update Wings${C_RESET}                             ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_RED}[4]${C_RESET} ${C_WHITE}Uninstall Wings${C_RESET}                          ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[5]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                        ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-4]: " sub_choice
+    read -rp "  Select an option [1-5]: " sub_choice
 
     case "$sub_choice" in
         1) wings_reconfigure ;;
-        2) wings_update ;;
-        3) wings_uninstall ;;
-        4) return 0 ;;
+        2) wings_restart ;;
+        3) wings_update ;;
+        4) wings_uninstall ;;
+        5) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 
