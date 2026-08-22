@@ -33,13 +33,23 @@ install_composer() {
     _frosty_check_mem
 
     echo "    Downloading Composer installer..."
-    if timeout 120 curl -sS https://getcomposer.org/installer -o /tmp/composer-setup.php 2>&1 | tee /tmp/frosty_composer.log; then
-        echo "    Running Composer installer (this should take under a minute)..."
-        if timeout 180 php8.3 /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer 2>&1 | tee -a /tmp/frosty_composer.log; then
-            _frosty_ok "Composer installed: $(composer --version 2>/dev/null | head -1)"
-            rm -f /tmp/composer-setup.php
-            return 0
-        fi
+    : > /tmp/frosty_composer.log
+    timeout 120 curl -sS https://getcomposer.org/installer -o /tmp/composer-setup.php >>/tmp/frosty_composer.log 2>&1 < /dev/null
+    if [[ $? -ne 0 || ! -s /tmp/composer-setup.php ]]; then
+        _frosty_fail "Composer download failed or timed out — see /tmp/frosty_composer.log"
+        return 1
+    fi
+
+    echo "    Running Composer installer (this should take under a minute)..."
+    tail -f /tmp/frosty_composer.log --pid=$$ & local tail_pid=$!
+    timeout 180 php8.3 /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer >>/tmp/frosty_composer.log 2>&1 < /dev/null
+    local rc=$?
+    kill "${tail_pid}" 2>/dev/null
+
+    if [[ ${rc} -eq 0 ]]; then
+        _frosty_ok "Composer installed: $(composer --version 2>/dev/null | head -1)"
+        rm -f /tmp/composer-setup.php
+        return 0
     fi
 
     _frosty_fail "Composer installation failed or timed out — see /tmp/frosty_composer.log"
@@ -70,17 +80,24 @@ configure_panel_env() {
     local composer_attempt=1
     local composer_ok=0
     while [[ ${composer_attempt} -le 2 ]]; do
-        if COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_MEMORY_LIMIT=-1 \
+        : > /tmp/frosty_composer_install.log
+        tail -f /tmp/frosty_composer_install.log --pid=$$ & local tail_pid=$!
+
+        COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_MEMORY_LIMIT=-1 \
             timeout 900 php8.3 /usr/local/bin/composer install \
                 --no-dev --optimize-autoloader --no-interaction --no-ansi \
-                2>&1 | tee /tmp/frosty_composer_install.log; then
+                >>/tmp/frosty_composer_install.log 2>&1 < /dev/null
+        local rc=$?
+        kill "${tail_pid}" 2>/dev/null
+
+        if [[ ${rc} -eq 0 ]]; then
             composer_ok=1
             break
         fi
 
         if [[ ${composer_attempt} -eq 1 ]]; then
             _frosty_warn "composer install failed or timed out (attempt 1/2) — clearing cache and retrying..."
-            php8.3 /usr/local/bin/composer clear-cache >/dev/null 2>&1
+            php8.3 /usr/local/bin/composer clear-cache >/dev/null 2>&1 < /dev/null
         fi
         composer_attempt=$((composer_attempt + 1))
     done
