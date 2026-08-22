@@ -1,6 +1,26 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
+_frosty_check_mem() {
+    # Warn (don't block) if the host has low RAM and no swap — the #1 cause
+    # of composer silently hanging forever instead of erroring out.
+    local mem_free_mb swap_total_mb
+    mem_free_mb=$(free -m | awk '/^Mem:/{print $7}')
+    swap_total_mb=$(free -m | awk '/^Swap:/{print $2}')
+
+    if [[ -n "${mem_free_mb}" && "${mem_free_mb}" -lt 512 && "${swap_total_mb:-0}" -eq 0 ]]; then
+        _frosty_warn "Low available memory (${mem_free_mb}MB) and no swap detected."
+        _frosty_warn "Composer can hang or get silently OOM-killed under these conditions."
+        echo "    Creating a temporary 1GB swapfile at /swapfile to prevent hangs..."
+        if [[ ! -f /swapfile ]]; then
+            fallocate -l 1G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=1024 status=none
+            chmod 600 /swapfile
+            mkswap /swapfile >/dev/null 2>&1
+            swapon /swapfile 2>/dev/null && _frosty_ok "Swapfile enabled" || _frosty_warn "Could not enable swapfile (may need different permissions in this environment)"
+        fi
+    fi
+}
+
 install_composer() {
     echo ""
     echo "== Installing Composer =="
@@ -10,16 +30,19 @@ install_composer() {
         return 0
     fi
 
+    _frosty_check_mem
+
     echo "    Downloading Composer installer..."
-    if curl -sS https://getcomposer.org/installer -o /tmp/composer-setup.php >/tmp/frosty_composer.log 2>&1; then
-        if php8.3 /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer >>/tmp/frosty_composer.log 2>&1; then
+    if timeout 120 curl -sS https://getcomposer.org/installer -o /tmp/composer-setup.php 2>&1 | tee /tmp/frosty_composer.log; then
+        echo "    Running Composer installer (this should take under a minute)..."
+        if timeout 180 php8.3 /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer 2>&1 | tee -a /tmp/frosty_composer.log; then
             _frosty_ok "Composer installed: $(composer --version 2>/dev/null | head -1)"
             rm -f /tmp/composer-setup.php
             return 0
         fi
     fi
 
-    _frosty_fail "Composer installation failed — see /tmp/frosty_composer.log"
+    _frosty_fail "Composer installation failed or timed out — see /tmp/frosty_composer.log"
     return 1
 }
 
@@ -41,11 +64,32 @@ configure_panel_env() {
         _frosty_ok ".env already exists — leaving as-is"
     fi
 
-    echo "    Running composer install (this can take a few minutes)..."
-    if COMPOSER_ALLOW_SUPERUSER=1 php8.3 /usr/local/bin/composer install --no-dev --optimize-autoloader --no-interaction >/tmp/frosty_composer_install.log 2>&1; then
+    _frosty_check_mem
+
+    echo "    Running composer install (this can take a few minutes, output below)..."
+    local composer_attempt=1
+    local composer_ok=0
+    while [[ ${composer_attempt} -le 2 ]]; do
+        if COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_MEMORY_LIMIT=-1 \
+            timeout 900 php8.3 /usr/local/bin/composer install \
+                --no-dev --optimize-autoloader --no-interaction --no-ansi \
+                2>&1 | tee /tmp/frosty_composer_install.log; then
+            composer_ok=1
+            break
+        fi
+
+        if [[ ${composer_attempt} -eq 1 ]]; then
+            _frosty_warn "composer install failed or timed out (attempt 1/2) — clearing cache and retrying..."
+            php8.3 /usr/local/bin/composer clear-cache >/dev/null 2>&1
+        fi
+        composer_attempt=$((composer_attempt + 1))
+    done
+
+    if [[ ${composer_ok} -eq 1 ]]; then
         _frosty_ok "Composer dependencies installed"
     else
-        _frosty_fail "composer install failed — see /tmp/frosty_composer_install.log"
+        _frosty_fail "composer install failed after retry — see /tmp/frosty_composer_install.log"
+        _frosty_warn "If it timed out (not errored), the host likely has too little RAM/swap for composer's dependency solver."
         return 1
     fi
 
