@@ -62,20 +62,31 @@ connect_cloudflare_token() {
 
     echo "    Installing tunnel service..."
     if [[ -d /run/systemd/system ]]; then
-        if cloudflared service install "$cf_token" >/tmp/frosty_cf_install.log 2>&1; then
-            systemctl enable cloudflared >/dev/null 2>&1
-            systemctl restart cloudflared >/dev/null 2>&1
-            sleep 2
-            if systemctl is-active --quiet cloudflared; then
-                _frosty_ok "Cloudflare tunnel connected and running"
+        cloudflared service install "$cf_token" >/tmp/frosty_cf_install.log 2>&1
+        systemctl enable cloudflared >/dev/null 2>&1
+        systemctl restart cloudflared >/dev/null 2>&1
+        sleep 3
+
+        if systemctl is-active --quiet cloudflared; then
+            _frosty_ok "Cloudflare tunnel connected and running (systemd)"
+        else
+            _frosty_warn "systemd service failed to start — checking why..."
+            journalctl -xeu cloudflared.service --no-pager 2>/dev/null | tail -15
+
+            echo "    Falling back to direct background process..."
+            systemctl stop cloudflared >/dev/null 2>&1
+            systemctl disable cloudflared >/dev/null 2>&1
+            pkill -f "cloudflared tunnel run" >/dev/null 2>&1
+            nohup cloudflared tunnel run --token "$cf_token" >/tmp/frosty_cf_run.log 2>&1 &
+            disown
+            sleep 4
+
+            if pgrep -f "cloudflared tunnel run" >/dev/null 2>&1; then
+                _frosty_ok "Cloudflare tunnel connected via background process (systemd unavailable/failed)"
             else
-                _frosty_fail "cloudflared service installed but not running — see /tmp/frosty_cf_install.log"
-                systemctl status cloudflared --no-pager | tail -20
+                _frosty_fail "Both systemd and background start failed — see /tmp/frosty_cf_install.log and /tmp/frosty_cf_run.log"
                 return 1
             fi
-        else
-            _frosty_fail "Tunnel service install failed — see /tmp/frosty_cf_install.log"
-            return 1
         fi
     else
         _frosty_warn "No systemd — running tunnel manually in background"
