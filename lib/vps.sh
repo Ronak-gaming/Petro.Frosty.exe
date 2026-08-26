@@ -328,10 +328,13 @@ CIEOF
     done
 
     if [[ -z "$vm_ip" ]]; then
-        _frosty_fail "Could not determine VM IP after 60s — check 'virsh domifaddr ${vm_name}' manually"
-        return 1
+        _frosty_warn "Could not determine VM IP after 60s — the VM is still created and running"
+        _frosty_warn "This usually means DHCP/networking isn't working in this environment (common in sandboxed/nested-virt hosts)"
+        _frosty_warn "You can still access it via serial console: option [14] Live Terminal, or 'virsh console ${vm_name}'"
+        _frosty_warn "Check manually with: virsh domifaddr ${vm_name}"
+    else
+        _frosty_ok "VM IP: ${vm_ip}"
     fi
-    _frosty_ok "VM IP: ${vm_ip}"
 
     cat > "${FROSTY_VPS_IMG_DIR}/${vm_name}.meta" << METAEOF
 image=${img_key}
@@ -340,6 +343,9 @@ created=$(date '+%Y-%m-%d %H:%M:%S')
 METAEOF
 
     echo ""
+    if [[ -z "$vm_ip" ]]; then
+        echo "    Skipping SSH-based post-setup (no network yet) — you can run it manually via console once network is confirmed working."
+    else
     echo "    Waiting for SSH to come up inside the VM (up to 60s)..."
     local ssh_ready=0
     for i in $(seq 1 20); do
@@ -373,6 +379,7 @@ METAEOF
         else
             _frosty_warn "Post-boot setup had issues — see /tmp/frosty_vps_postsetup_${vm_name}.log"
         fi
+    fi
     fi
 
     echo ""
@@ -647,15 +654,18 @@ show_vps_firewall_submenu() {
 # Opens a direct, interactive SSH session into the VM right in the current
 # terminal — no tmate, no shareable link, just an immediate live session
 # for the person sitting at this machine.
+# Opens a direct, interactive session into the VM right in the current
+# terminal. Tries SSH first (needs an IP + working network); if that's
+# not available, falls back to the VM's serial console via virsh, which
+# talks directly to the virtual serial port and needs no networking at
+# all — this works even when the VM never got a DHCP lease.
 vps_live_terminal() {
     echo ""
     echo -e "${C_CYAN:-}== Live Terminal (Local) ==${C_RESET:-}"
     read -rp "  VM name to open: " vm_name
 
-    local vm_ip
-    vm_ip="$(_frosty_vps_ip "$vm_name")"
-    if [[ -z "$vm_ip" ]]; then
-        _frosty_fail "No IP on record for '$vm_name'"
+    if ! virsh dominfo "$vm_name" >/dev/null 2>&1; then
+        _frosty_fail "VM '$vm_name' not found"
         return 1
     fi
 
@@ -665,18 +675,25 @@ vps_live_terminal() {
         sleep 3
     fi
 
-    echo "    Checking SSH is reachable..."
-    if ! ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes "root@${vm_ip}" "echo ok" >/dev/null 2>&1; then
-        _frosty_fail "Could not reach '$vm_name' at ${vm_ip} over SSH — it may still be booting, or the IP changed"
-        _frosty_warn "Try again in a few seconds, or check 'virsh domifaddr ${vm_name}' for its current IP"
-        return 1
+    local vm_ip
+    vm_ip="$(_frosty_vps_ip "$vm_name")"
+
+    if [[ -n "$vm_ip" ]] && ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes "root@${vm_ip}" "echo ok" >/dev/null 2>&1; then
+        echo -e "    ${C_YELLOW:-}Opening a live terminal into '$vm_name' (${vm_ip}) via SSH. Type 'exit' to return.${C_RESET:-}"
+        echo ""
+        ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -o StrictHostKeyChecking=no -t "root@${vm_ip}" "command -v neofetch >/dev/null 2>&1 && neofetch || (command -v screenfetch >/dev/null 2>&1 && screenfetch); exec bash -l"
+        echo ""
+        _frosty_ok "Returned from live terminal into '$vm_name'"
+        return 0
     fi
 
-    echo -e "    ${C_YELLOW:-}Opening a live terminal into '$vm_name' (${vm_ip}). Type 'exit' to return to Frosty.exe.${C_RESET:-}"
+    _frosty_warn "SSH not available (no IP yet, or network not up) — falling back to the VM's serial console"
+    echo -e "    ${C_YELLOW:-}Opening serial console into '$vm_name'. Press Ctrl+] to exit the console.${C_RESET:-}"
+    echo -e "    ${C_YELLOW:-}Note: you may need to press Enter once to see a login prompt.${C_RESET:-}"
     echo ""
-    ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -o StrictHostKeyChecking=no -t "root@${vm_ip}" "command -v neofetch >/dev/null 2>&1 && neofetch || (command -v screenfetch >/dev/null 2>&1 && screenfetch); exec bash -l"
+    virsh console "$vm_name"
     echo ""
-    _frosty_ok "Returned from live terminal into '$vm_name'"
+    _frosty_ok "Returned from console into '$vm_name'"
 }
 
 vps_share_tmate() {
