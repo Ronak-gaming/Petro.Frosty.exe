@@ -237,13 +237,13 @@ METAEOF
     echo "      ssh -i ${FROSTY_VPS_DOCKER_DIR}/frosty_vps_key -p ${ssh_port} root@${FROSTY_PUBLIC_IP:-<your-server-ip>}"
 
     echo ""
-    echo "  Access this VPS now? [1] tmate (shareable link)  [2] Live Terminal (local, opens now)  [3] Skip"
-    read -rp "  Choice [1-3]: " share_now
-    case "$share_now" in
-        1) vps_docker_share_tmate <<< "$vm_name" ;;
-        2) vps_docker_live_terminal <<< "$vm_name" ;;
-        *) : ;;
-    esac
+    echo -e "    ${C_CYAN:-}Setting up sharing links automatically...${C_RESET:-}"
+    echo ""
+    echo -e "    ${C_CYAN:-}-- tmate --${C_RESET:-}"
+    vps_docker_share_tmate <<< "$vm_name"
+    echo ""
+    echo -e "    ${C_CYAN:-}-- sshx --${C_RESET:-}"
+    vps_docker_share_sshx <<< "$vm_name"
 
     return 0
 }
@@ -348,6 +348,88 @@ vps_docker_live_terminal() {
     _frosty_ok "Returned from live terminal into '$vm_name'"
 }
 
+vps_docker_share_sshx() {
+    echo ""
+    echo "== Share Terminal via sshx =="
+    read -rp "  VPS name to access: " vm_name
+
+    if ! docker inspect "frosty-vps-${vm_name}" >/dev/null 2>&1; then
+        _frosty_fail "VPS '$vm_name' not found"
+        return 1
+    fi
+
+    if [[ "$(docker inspect -f '{{.State.Running}}' "frosty-vps-${vm_name}" 2>/dev/null)" != "true" ]]; then
+        docker start "frosty-vps-${vm_name}" >/dev/null 2>&1
+        sleep 1
+    fi
+
+    local sshx_log="/tmp/frosty-sshx-docker-${vm_name}.log"
+    local sshx_pidfile="/tmp/frosty-sshx-docker-${vm_name}.pid"
+
+    if [[ -f "$sshx_pidfile" ]] && kill -0 "$(cat "$sshx_pidfile" 2>/dev/null)" 2>/dev/null; then
+        _frosty_ok "Existing sshx session for '$vm_name' is still alive"
+    else
+        echo "    Checking connectivity to sshx.io..."
+        if ! timeout 6 bash -c "cat < /dev/null > /dev/tcp/sshx.io/443" 2>/dev/null; then
+            _frosty_fail "Cannot reach sshx.io from this host"
+            _frosty_warn "This environment's network likely blocks outbound access to sshx's relay servers."
+            return 1
+        fi
+
+        echo -e "    ${C_CYAN:-}Starting a new sshx session into VPS '$vm_name'...${C_RESET:-}"
+        rm -f "$sshx_log"
+        (
+            docker exec -i "frosty-vps-${vm_name}" bash -c "command -v sshx >/dev/null 2>&1 || curl -sSf https://sshx.io/get | sh; (command -v neofetch >/dev/null 2>&1 && neofetch || screenfetch) ; sshx" > "$sshx_log" 2>&1
+        ) &
+        echo $! > "$sshx_pidfile"
+
+        echo -n "    Waiting for sshx link"
+        local waited=0 link=""
+        while [[ ${waited} -lt 20 ]]; do
+            link="$(sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' "$sshx_log" 2>/dev/null | grep -oE 'https://sshx\.io/s/[A-Za-z0-9#]+' | tail -1)"
+            [[ -n "$link" ]] && break
+            echo -n "."
+            sleep 1
+            waited=$((waited + 1))
+        done
+        echo ""
+    fi
+
+    local link
+    link="$(sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' "$sshx_log" 2>/dev/null | grep -oE 'https://sshx\.io/s/[A-Za-z0-9#]+' | tail -1)"
+    if [[ -n "$link" ]]; then
+        echo -e "    ${C_YELLOW:-}Share this link for a live browser terminal into '$vm_name':${C_RESET:-}"
+        echo "    $link"
+        return 0
+    else
+        _frosty_warn "sshx link not detected yet — check $sshx_log manually, it may still be starting"
+        return 1
+    fi
+}
+
+vps_docker_rejoin_sshx() {
+    echo ""
+    echo "== Rejoin Existing sshx Session =="
+    read -rp "  VPS name: " vm_name
+    local sshx_log="/tmp/frosty-sshx-docker-${vm_name}.log"
+    local sshx_pidfile="/tmp/frosty-sshx-docker-${vm_name}.pid"
+
+    if [[ ! -f "$sshx_pidfile" ]] || ! kill -0 "$(cat "$sshx_pidfile" 2>/dev/null)" 2>/dev/null; then
+        _frosty_warn "No active sshx session found for '$vm_name' — starting a new one instead"
+        vps_docker_share_sshx <<< "$vm_name"
+        return 0
+    fi
+
+    local link
+    link="$(sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' "$sshx_log" 2>/dev/null | grep -oE 'https://sshx\.io/s/[A-Za-z0-9#]+' | tail -1)"
+    if [[ -n "$link" ]]; then
+        echo -e "    ${C_CYAN:-}Session is alive. Link for '$vm_name':${C_RESET:-}"
+        echo "    $link"
+    else
+        _frosty_warn "Session process alive but no link found in log — check $sshx_log manually"
+    fi
+}
+
 vps_docker_share_tmate() {
     echo ""
     echo "== Share Terminal via tmate =="
@@ -388,9 +470,24 @@ vps_docker_share_tmate() {
             _frosty_warn "Found a stale/dead tmate socket for '$vm_name' — cleaning it up and starting fresh"
             tmate -S "$tmate_sock" kill-server >/dev/null 2>&1
         fi
+
+        # tmate needs to reach its relay server over the network. If that's
+        # blocked (sandboxed/firewalled dev environments commonly block
+        # this), the session will hang forever with zero error output —
+        # so check this BEFORE spending 20s waiting on a dead attempt.
+        echo "    Checking connectivity to tmate's relay server..."
+        if ! timeout 6 bash -c "cat < /dev/null > /dev/tcp/tmate.io/22" 2>/dev/null; then
+            _frosty_fail "Cannot reach tmate.io on port 22 from this host"
+            _frosty_warn "This environment's network likely blocks outbound access to tmate's relay servers."
+            _frosty_warn "This is common in sandboxed dev containers/Codespaces with restricted egress."
+            _frosty_warn "tmate sharing will not work here until outbound access to tmate.io is allowed — try Live Terminal (Local) instead, or run this on a host with open outbound network access."
+            return 1
+        fi
+        _frosty_ok "tmate.io is reachable"
+
         echo -e "    ${C_CYAN:-}Starting a new tmate session into VPS '$vm_name'...${C_RESET:-}"
         rm -f "$tmate_sock"
-        tmate -S "$tmate_sock" -f /dev/null new-session -d -n frosty-vps-docker \
+        tmate -v -S "$tmate_sock" -f /dev/null new-session -d -n frosty-vps-docker \
             "docker exec -it frosty-vps-${vm_name} bash -c 'command -v neofetch >/dev/null 2>&1 && neofetch || screenfetch; exec bash -l'" \
             2>/tmp/frosty_tmate_session.log
 
@@ -416,8 +513,8 @@ vps_docker_share_tmate() {
         echo ""
 
         if [[ -z "$ssh_line" ]]; then
-            _frosty_fail "tmate session did not come up after ${waited}s — is this host able to reach tmate.io?"
-            _frosty_warn "Check /tmp/frosty_tmate_session.log, and confirm outbound network access is allowed."
+            _frosty_fail "tmate session did not come up after ${waited}s despite tmate.io being reachable"
+            _frosty_warn "Check /tmp/frosty_tmate_session.log (found: $(find /tmp -maxdepth 1 -iname 'tmate-*' 2>/dev/null | tr '\n' ' '))"
             return 1
         fi
     fi
@@ -469,11 +566,13 @@ show_vps_docker_full_menu() {
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[8]${C_RESET}  ${C_WHITE}Share via tmate${C_RESET}                         ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[9]${C_RESET}  ${C_WHITE}Rejoin tmate Session${C_RESET}                    ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_GREEN}[10]${C_RESET} ${C_WHITE}Live Terminal (Local)${C_RESET}                   ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[11]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                       ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[11]${C_RESET} ${C_WHITE}Share via sshx${C_RESET}                          ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[12]${C_RESET} ${C_WHITE}Rejoin sshx Session${C_RESET}                     ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[13]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                       ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-11]: " vps_choice
+    read -rp "  Select an option [1-13]: " vps_choice
 
     case "$vps_choice" in
         1) vps_docker_create ;;
@@ -486,7 +585,9 @@ show_vps_docker_full_menu() {
         8) vps_docker_share_tmate ;;
         9) vps_docker_rejoin_tmate ;;
         10) vps_docker_live_terminal ;;
-        11) return 0 ;;
+        11) vps_docker_share_sshx ;;
+        12) vps_docker_rejoin_sshx ;;
+        13) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 
