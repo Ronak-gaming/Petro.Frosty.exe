@@ -59,21 +59,23 @@ repair_all_services() {
     fi
 
     # PHP-FPM
-    # A socket FILE existing isn't proof anything's listening on it — and
-    # this config has no PID file, so php-fpm can't detect an existing
-    # instance on its own. Deleting just the socket without killing the
-    # process behind it orphans the old master, which keeps running
-    # invisibly and piles up with every repair run.
+    # The real process title is "php-fpm: master process (<conf path>)"
+    # with NO version number next to "master" — only the conf path
+    # (which contains the version) distinguishes it. A pattern like
+    # "php-fpm8.3: master" never matches anything real, so both the
+    # liveness check and any pkill using it would silently no-op.
     local fpm_sock="/run/php/php${FROSTY_PHP_VERSION:-8.3}-fpm.sock"
     local fpm_pid="/run/php/php${FROSTY_PHP_VERSION:-8.3}-fpm.pid"
-    if [[ -S "$fpm_sock" ]] && pgrep -f "php-fpm${FROSTY_PHP_VERSION:-8.3}: master" >/dev/null 2>&1; then
+    local fpm_pattern="master process \\(.*php/${FROSTY_PHP_VERSION:-8.3}/fpm/php-fpm\\.conf\\)"
+
+    if [[ -S "$fpm_sock" ]] && pgrep -f "$fpm_pattern" >/dev/null 2>&1; then
         _frosty_ok "php-fpm already running"
     else
-        if pgrep -f "php-fpm${FROSTY_PHP_VERSION:-8.3}: master" >/dev/null 2>&1; then
+        if pgrep -f "$fpm_pattern" >/dev/null 2>&1; then
             _frosty_warn "Found existing php-fpm master process(es) with a dead socket — stopping before restart"
-            pkill -f "php-fpm${FROSTY_PHP_VERSION:-8.3}: master" 2>/dev/null
+            pkill -f "$fpm_pattern" 2>/dev/null
             sleep 1
-            pkill -9 -f "php-fpm${FROSTY_PHP_VERSION:-8.3}: master" 2>/dev/null
+            pkill -9 -f "$fpm_pattern" 2>/dev/null
         fi
         rm -f "$fpm_sock" "$fpm_pid"
         echo "    Starting php-fpm..."
@@ -83,7 +85,7 @@ repair_all_services() {
             "php-fpm${FROSTY_PHP_VERSION:-8.3}" -D >/tmp/frosty_php_fpm_repair.log 2>&1
         fi
         sleep 2
-        if [[ -S "$fpm_sock" ]] && pgrep -f "php-fpm${FROSTY_PHP_VERSION:-8.3}: master" >/dev/null 2>&1; then
+        if [[ -S "$fpm_sock" ]] && pgrep -f "$fpm_pattern" >/dev/null 2>&1; then
             _frosty_ok "php-fpm started"
         else
             _frosty_fail "php-fpm failed to start"
