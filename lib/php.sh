@@ -88,24 +88,52 @@ install_php() {
             return 1
         fi
     else
-        _frosty_warn "No systemd — starting php-fpm${FROSTY_PHP_VERSION} manually"
         local fpm_sock="/run/php/php${FROSTY_PHP_VERSION}-fpm.sock"
-        # A socket FILE existing isn't proof anything's listening on it —
-        # a dead process from a previous run leaves a stale socket behind,
-        # which would otherwise skip starting a real php-fpm process.
-        if [[ -S "$fpm_sock" ]] && ! pgrep -f "php-fpm${FROSTY_PHP_VERSION}" >/dev/null 2>&1; then
-            _frosty_warn "Found a stale php-fpm socket with no process behind it — removing it"
-            rm -f "$fpm_sock"
-        fi
-        if ! pgrep -f "php-fpm${FROSTY_PHP_VERSION}" >/dev/null 2>&1; then
+        local fpm_pid="/run/php/php${FROSTY_PHP_VERSION}-fpm.pid"
+        local fpm_syslog="/var/log/php${FROSTY_PHP_VERSION}-fpm.log"
+
+        if [[ -S "$fpm_sock" ]] && pgrep -f "php-fpm${FROSTY_PHP_VERSION}: master" >/dev/null 2>&1; then
+            _frosty_ok "php-fpm${FROSTY_PHP_VERSION} already running (socket active)"
+        else
+            _frosty_warn "No systemd — starting php-fpm${FROSTY_PHP_VERSION} manually"
+
+            # This config has no PID file, so php-fpm has no way to detect
+            # an existing instance — deleting just the socket file (without
+            # killing the process behind it) orphans the old master, which
+            # keeps running invisibly and piles up with every restart.
+            # Always kill any existing master for this version first.
+            if pgrep -f "php-fpm${FROSTY_PHP_VERSION}: master" >/dev/null 2>&1; then
+                _frosty_warn "Found existing php-fpm${FROSTY_PHP_VERSION} master process(es) — stopping before restart"
+                pkill -f "php-fpm${FROSTY_PHP_VERSION}: master" 2>/dev/null
+                sleep 1
+                pkill -9 -f "php-fpm${FROSTY_PHP_VERSION}: master" 2>/dev/null
+            fi
+            rm -f "$fpm_sock" "$fpm_pid"
+
             "php-fpm${FROSTY_PHP_VERSION}" -D >/tmp/frosty_php_fpm.log 2>&1
             sleep 2
-        fi
-        if [[ -S "$fpm_sock" ]] && pgrep -f "php-fpm${FROSTY_PHP_VERSION}" >/dev/null 2>&1; then
-            _frosty_ok "php-fpm${FROSTY_PHP_VERSION} running (socket active)"
-        else
-            _frosty_fail "php-fpm${FROSTY_PHP_VERSION} failed to start — see /tmp/frosty_php_fpm.log"
-            return 1
+
+            if [[ -S "$fpm_sock" ]] && pgrep -f "php-fpm${FROSTY_PHP_VERSION}: master" >/dev/null 2>&1; then
+                _frosty_ok "php-fpm${FROSTY_PHP_VERSION} running (socket active)"
+            else
+                # php-fpm -D detaches from the terminal right after forking,
+                # so real startup errors usually never reach our redirected
+                # log — they go to php-fpm's own configured error log
+                # instead. Pull both, plus a config test, so the actual
+                # cause is visible.
+                _frosty_fail "php-fpm${FROSTY_PHP_VERSION} failed to start"
+                echo "    -- config test (php-fpm${FROSTY_PHP_VERSION} -t) --"
+                "php-fpm${FROSTY_PHP_VERSION}" -t 2>&1 | sed 's/^/    /'
+                if [[ -f "$fpm_syslog" ]]; then
+                    echo "    -- last lines of ${fpm_syslog} --"
+                    tail -15 "$fpm_syslog" 2>/dev/null | sed 's/^/    /'
+                fi
+                if [[ -s /tmp/frosty_php_fpm.log ]]; then
+                    echo "    -- /tmp/frosty_php_fpm.log --"
+                    cat /tmp/frosty_php_fpm.log | sed 's/^/    /'
+                fi
+                return 1
+            fi
         fi
     fi
 
