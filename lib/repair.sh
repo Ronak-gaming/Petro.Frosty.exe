@@ -59,9 +59,17 @@ repair_all_services() {
     fi
 
     # PHP-FPM
-    if [[ -S "/run/php/php${FROSTY_PHP_VERSION:-8.3}-fpm.sock" ]]; then
+    # A socket FILE existing isn't proof anything's listening on it — a
+    # dead process leaves a stale socket behind, which passed this check
+    # and skipped restarting even though php-fpm was actually down.
+    local fpm_sock="/run/php/php${FROSTY_PHP_VERSION:-8.3}-fpm.sock"
+    if [[ -S "$fpm_sock" ]] && pgrep -f "php-fpm${FROSTY_PHP_VERSION:-8.3}" >/dev/null 2>&1; then
         _frosty_ok "php-fpm already running"
     else
+        if [[ -S "$fpm_sock" ]]; then
+            _frosty_warn "Found a stale php-fpm socket with no process behind it — removing and restarting"
+            rm -f "$fpm_sock"
+        fi
         echo "    Starting php-fpm..."
         if [[ -d /run/systemd/system ]]; then
             systemctl restart "php${FROSTY_PHP_VERSION:-8.3}-fpm" >/dev/null 2>&1
@@ -69,7 +77,11 @@ repair_all_services() {
             "php-fpm${FROSTY_PHP_VERSION:-8.3}" -D >/dev/null 2>&1
         fi
         sleep 2
-        [[ -S "/run/php/php${FROSTY_PHP_VERSION:-8.3}-fpm.sock" ]] && _frosty_ok "php-fpm started" || _frosty_fail "php-fpm failed to start"
+        if [[ -S "$fpm_sock" ]] && pgrep -f "php-fpm${FROSTY_PHP_VERSION:-8.3}" >/dev/null 2>&1; then
+            _frosty_ok "php-fpm started"
+        else
+            _frosty_fail "php-fpm failed to start"
+        fi
     fi
 
     # nginx
