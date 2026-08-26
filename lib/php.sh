@@ -91,8 +91,12 @@ install_php() {
         local fpm_sock="/run/php/php${FROSTY_PHP_VERSION}-fpm.sock"
         local fpm_pid="/run/php/php${FROSTY_PHP_VERSION}-fpm.pid"
         local fpm_syslog="/var/log/php${FROSTY_PHP_VERSION}-fpm.log"
+        # The real process title is "php-fpm: master process (<conf path>)"
+        # with NO version number next to "master" — only the conf path
+        # (which contains the version) distinguishes it. Match on that.
+        local fpm_pattern="master process \\(.*php/${FROSTY_PHP_VERSION}/fpm/php-fpm\\.conf\\)"
 
-        if [[ -S "$fpm_sock" ]] && pgrep -f "php-fpm${FROSTY_PHP_VERSION}: master" >/dev/null 2>&1; then
+        if [[ -S "$fpm_sock" ]] && pgrep -f "$fpm_pattern" >/dev/null 2>&1; then
             _frosty_ok "php-fpm${FROSTY_PHP_VERSION} already running (socket active)"
         else
             _frosty_warn "No systemd — starting php-fpm${FROSTY_PHP_VERSION} manually"
@@ -102,18 +106,18 @@ install_php() {
             # killing the process behind it) orphans the old master, which
             # keeps running invisibly and piles up with every restart.
             # Always kill any existing master for this version first.
-            if pgrep -f "php-fpm${FROSTY_PHP_VERSION}: master" >/dev/null 2>&1; then
+            if pgrep -f "$fpm_pattern" >/dev/null 2>&1; then
                 _frosty_warn "Found existing php-fpm${FROSTY_PHP_VERSION} master process(es) — stopping before restart"
-                pkill -f "php-fpm${FROSTY_PHP_VERSION}: master" 2>/dev/null
+                pkill -f "$fpm_pattern" 2>/dev/null
                 sleep 1
-                pkill -9 -f "php-fpm${FROSTY_PHP_VERSION}: master" 2>/dev/null
+                pkill -9 -f "$fpm_pattern" 2>/dev/null
             fi
             rm -f "$fpm_sock" "$fpm_pid"
 
             "php-fpm${FROSTY_PHP_VERSION}" -D >/tmp/frosty_php_fpm.log 2>&1
             sleep 2
 
-            if [[ -S "$fpm_sock" ]] && pgrep -f "php-fpm${FROSTY_PHP_VERSION}: master" >/dev/null 2>&1; then
+            if [[ -S "$fpm_sock" ]] && pgrep -f "$fpm_pattern" >/dev/null 2>&1; then
                 _frosty_ok "php-fpm${FROSTY_PHP_VERSION} running (socket active)"
             else
                 # php-fpm -D detaches from the terminal right after forking,
