@@ -377,9 +377,17 @@ vps_docker_share_tmate() {
     local tmate_sock="/tmp/frosty-tmate-docker-${vm_name}.sock"
     local ssh_line=""
 
-    if tmate -S "$tmate_sock" display -p '#{tmate_ssh}' >/dev/null 2>&1; then
+    # Checking exit code alone isn't enough — a stale local socket from a
+    # session whose link never actually populated (e.g. hit before this
+    # fix, or a network hiccup) still returns exit 0 with an empty value.
+    ssh_line="$(tmate -S "$tmate_sock" display -p '#{tmate_ssh}' 2>/dev/null)"
+    if [[ -n "$ssh_line" ]]; then
         _frosty_ok "Existing tmate session for '$vm_name' is still alive — reusing it"
     else
+        if [[ -S "$tmate_sock" ]]; then
+            _frosty_warn "Found a stale/dead tmate socket for '$vm_name' — cleaning it up and starting fresh"
+            tmate -S "$tmate_sock" kill-server >/dev/null 2>&1
+        fi
         echo -e "    ${C_CYAN:-}Starting a new tmate session into VPS '$vm_name'...${C_RESET:-}"
         rm -f "$tmate_sock"
         tmate -S "$tmate_sock" -f /dev/null new-session -d -n frosty-vps-docker \
@@ -407,7 +415,7 @@ vps_docker_share_tmate() {
         done
         echo ""
 
-        if ! tmate -S "$tmate_sock" display -p '#{tmate_ssh}' >/dev/null 2>&1; then
+        if [[ -z "$ssh_line" ]]; then
             _frosty_fail "tmate session did not come up after ${waited}s — is this host able to reach tmate.io?"
             _frosty_warn "Check /tmp/frosty_tmate_session.log, and confirm outbound network access is allowed."
             return 1
@@ -425,17 +433,23 @@ vps_docker_rejoin_tmate() {
     echo "== Rejoin Existing tmate Session =="
     read -rp "  VPS name: " vm_name
     local tmate_sock="/tmp/frosty-tmate-docker-${vm_name}.sock"
+    local ssh_line=""
 
-    if [[ ! -S "$tmate_sock" ]] || ! tmate -S "$tmate_sock" display -p '#{tmate_ssh}' >/dev/null 2>&1; then
-        _frosty_warn "No active tmate session found for '$vm_name' — starting a new one instead"
+    if [[ -S "$tmate_sock" ]]; then
+        ssh_line="$(tmate -S "$tmate_sock" display -p '#{tmate_ssh}' 2>/dev/null)"
+    fi
+
+    if [[ -z "$ssh_line" ]]; then
+        _frosty_warn "No live tmate session found for '$vm_name' — starting a new one instead"
+        [[ -S "$tmate_sock" ]] && tmate -S "$tmate_sock" kill-server >/dev/null 2>&1
         rm -f "$tmate_sock"
-        vps_docker_share_tmate
+        vps_docker_share_tmate <<< "$vm_name"
         return 0
     fi
 
     echo -e "    ${C_CYAN:-}Session is alive. Sharing details for '$vm_name':${C_RESET:-}"
-    tmate -S "$tmate_sock" display -p '#{tmate_ssh}'
-    tmate -S "$tmate_sock" display -p '#{tmate_web}'
+    echo "$ssh_line"
+    tmate -S "$tmate_sock" display -p '#{tmate_web}' 2>/dev/null
 }
 
 show_vps_docker_full_menu() {
