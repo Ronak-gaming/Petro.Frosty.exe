@@ -53,6 +53,24 @@ vps_docker_exists_any() {
     command -v docker >/dev/null 2>&1 && docker ps -a --filter "name=frosty-vps-" -q 2>/dev/null | grep -q .
 }
 
+# Returns the published host SSH port for a VPS by reading its .meta file,
+# falling back to inspecting the live container if the meta is missing/old.
+_frosty_vps_docker_ssh_port() {
+    local vm_name="$1"
+    local meta="${FROSTY_VPS_DOCKER_DIR}/${vm_name}.meta"
+    local port=""
+
+    if [[ -f "$meta" ]]; then
+        port="$(grep -E '^ssh_port=' "$meta" 2>/dev/null | cut -d= -f2)"
+    fi
+
+    if [[ -z "$port" ]]; then
+        port="$(docker port "frosty-vps-${vm_name}" 22/tcp 2>/dev/null | head -1 | cut -d: -f2)"
+    fi
+
+    echo "$port"
+}
+
 show_vps_docker_menu() {
     clear
     print_banner
@@ -139,7 +157,8 @@ vps_docker_create() {
         return 1
     fi
 
-    read -rp "  Set root password: " vm_pass
+    read -rsp "  Set root password: " vm_pass
+    echo ""
     if [[ -z "$vm_pass" ]]; then
         _frosty_fail "Root password is required"
         return 1
@@ -148,16 +167,25 @@ vps_docker_create() {
     local pubkey
     pubkey="$(cat "${FROSTY_VPS_DOCKER_DIR}/frosty_vps_key.pub" 2>/dev/null)"
 
+    # Find a free host port for SSH, starting at 2200 — this is what was
+    # missing before: without publishing a port, nothing outside the
+    # container could ever reach its sshd.
+    local ssh_port=2200
+    while docker ps -a --format '{{.Ports}}' | grep -q ":${ssh_port}->"; do
+        ssh_port=$((ssh_port + 1))
+    done
+
     echo "    Pulling image ${docker_img}..."
     docker pull "$docker_img" >/tmp/frosty_vps_docker_pull.log 2>&1
 
-    echo "    Creating container..."
+    echo "    Creating container (SSH will be reachable on host port ${ssh_port})..."
     docker run -d \
         --name "frosty-vps-${vm_name}" \
         --hostname "$vm_name" \
         --memory "${vm_ram}m" \
         --cpus "$vm_cpu" \
         --restart unless-stopped \
+        -p "${ssh_port}:22" \
         "$docker_img" sleep infinity >/tmp/frosty_vps_docker_run.log 2>&1
 
     if [[ $? -ne 0 ]]; then
@@ -169,8 +197,8 @@ vps_docker_create() {
     echo "    Installing SSH server inside container..."
     docker exec "frosty-vps-${vm_name}" bash -c "
         apt update -y >/dev/null 2>&1
-        apt install -y openssh-server sudo curl >/dev/null 2>&1
-        apt install -y neofetch >/dev/null 2>&1 || apt install -y screenfetch >/dev/null 2>&1
+        DEBIAN_FRONTEND=noninteractive apt install -y openssh-server sudo curl >/dev/null 2>&1
+        DEBIAN_FRONTEND=noninteractive apt install -y neofetch >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive apt install -y screenfetch >/dev/null 2>&1
         mkdir -p /run/sshd /root/.ssh
         echo 'root:${vm_pass}' | chpasswd
         echo '${pubkey}' >> /root/.ssh/authorized_keys
@@ -178,6 +206,7 @@ vps_docker_create() {
         chmod 600 /root/.ssh/authorized_keys
         sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
         sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+        ssh-keygen -A >/dev/null 2>&1
         /usr/sbin/sshd
     " >/tmp/frosty_vps_docker_ssh_setup.log 2>&1
 
@@ -185,19 +214,34 @@ vps_docker_create() {
         _frosty_fail "SSH setup inside container failed — see /tmp/frosty_vps_docker_ssh_setup.log"
         return 1
     fi
-    _frosty_ok "SSH server running inside container"
+
+    # Verify sshd actually stayed running before declaring success — some
+    # minimal base images silently refuse to start sshd if host keys are
+    # missing, so a clean exit code alone isn't proof it's really up.
+    sleep 1
+    if ! docker exec "frosty-vps-${vm_name}" pgrep -x sshd >/dev/null 2>&1; then
+        _frosty_fail "sshd did not stay running inside the container — see /tmp/frosty_vps_docker_ssh_setup.log"
+        return 1
+    fi
+    _frosty_ok "SSH server running inside container (host port ${ssh_port} -> container 22)"
 
     cat > "${FROSTY_VPS_DOCKER_DIR}/${vm_name}.meta" << METAEOF
 image=${img_key}
 container=frosty-vps-${vm_name}
 created=$(date '+%Y-%m-%d %H:%M:%S')
+ssh_port=${ssh_port}
 METAEOF
 
     echo ""
-    echo "  Share this VPS now? [1] tmate  [2] Skip"
-    read -rp "  Choice [1-2]: " share_now
+    echo -e "    ${C_CYAN:-}Connect via SSH with:${C_RESET:-}"
+    echo "      ssh -i ${FROSTY_VPS_DOCKER_DIR}/frosty_vps_key -p ${ssh_port} root@${FROSTY_PUBLIC_IP:-<your-server-ip>}"
+
+    echo ""
+    echo "  Access this VPS now? [1] tmate (shareable link)  [2] Live Terminal (local, opens now)  [3] Skip"
+    read -rp "  Choice [1-3]: " share_now
     case "$share_now" in
         1) vps_docker_share_tmate <<< "$vm_name" ;;
+        2) vps_docker_live_terminal <<< "$vm_name" ;;
         *) : ;;
     esac
 
@@ -278,6 +322,32 @@ vps_docker_edit_config() {
     esac
 }
 
+# Opens a direct, interactive shell into the container right in the current
+# terminal — no tmate, no shareable link, just an immediate live session
+# for the person sitting at this machine.
+vps_docker_live_terminal() {
+    echo ""
+    echo -e "${C_CYAN:-}== Live Terminal (Local) ==${C_RESET:-}"
+    read -rp "  VPS name to open: " vm_name
+
+    if ! docker inspect "frosty-vps-${vm_name}" >/dev/null 2>&1; then
+        _frosty_fail "VPS '$vm_name' not found"
+        return 1
+    fi
+
+    if [[ "$(docker inspect -f '{{.State.Running}}' "frosty-vps-${vm_name}" 2>/dev/null)" != "true" ]]; then
+        _frosty_warn "'$vm_name' is not running — starting it first..."
+        docker start "frosty-vps-${vm_name}" >/dev/null 2>&1
+        sleep 1
+    fi
+
+    echo -e "    ${C_YELLOW:-}Opening a live terminal into '$vm_name'. Type 'exit' to return to Frosty.exe.${C_RESET:-}"
+    echo ""
+    docker exec -it "frosty-vps-${vm_name}" bash -c "command -v neofetch >/dev/null 2>&1 && neofetch || (command -v screenfetch >/dev/null 2>&1 && screenfetch); exec bash -l"
+    echo ""
+    _frosty_ok "Returned from live terminal into '$vm_name'"
+}
+
 vps_docker_share_tmate() {
     echo ""
     echo "== Share Terminal via tmate =="
@@ -344,11 +414,12 @@ show_vps_docker_full_menu() {
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_RED}[7]${C_RESET}  ${C_WHITE}Delete VPS${C_RESET}                              ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[8]${C_RESET}  ${C_WHITE}Share via tmate${C_RESET}                         ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[9]${C_RESET}  ${C_WHITE}Rejoin tmate Session${C_RESET}                    ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[10]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                       ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_GREEN}[10]${C_RESET} ${C_WHITE}Live Terminal (Local)${C_RESET}                   ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[11]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                       ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-10]: " vps_choice
+    read -rp "  Select an option [1-11]: " vps_choice
 
     case "$vps_choice" in
         1) vps_docker_create ;;
@@ -360,7 +431,8 @@ show_vps_docker_full_menu() {
         7) vps_docker_delete ;;
         8) vps_docker_share_tmate ;;
         9) vps_docker_rejoin_tmate ;;
-        10) return 0 ;;
+        10) vps_docker_live_terminal ;;
+        11) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 
