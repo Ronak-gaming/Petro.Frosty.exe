@@ -240,7 +240,8 @@ vps_create() {
         return 1
     fi
 
-    read -rp "  Set root password for the VM: " vm_pass
+    read -rsp "  Set root password for the VM: " vm_pass
+    echo ""
     if [[ -z "$vm_pass" ]]; then
         _frosty_fail "Root password is required"
         return 1
@@ -252,8 +253,9 @@ vps_create() {
 
     if [[ ! -f "$base_img" ]]; then
         echo "    Downloading ${img_key} cloud image (this may take a few minutes)..."
-        if ! curl -L -o "$base_img" "$img_url" >/tmp/frosty_vps_download.log 2>&1; then
-            _frosty_fail "Image download failed — see /tmp/frosty_vps_download.log"
+        if ! timeout 900 curl -L -o "$base_img" "$img_url" >/tmp/frosty_vps_download.log 2>&1; then
+            _frosty_fail "Image download failed or timed out after 15 minutes — see /tmp/frosty_vps_download.log"
+            rm -f "$base_img"
             return 1
         fi
         _frosty_ok "Base image downloaded"
@@ -374,11 +376,12 @@ METAEOF
     fi
 
     echo ""
-    echo "  Share this VM now? [1] tmate  [2] sshx  [3] Skip"
-    read -rp "  Choice [1-3]: " share_now
+    echo "  Share this VM now? [1] tmate  [2] sshx  [3] Live Terminal (local)  [4] Skip"
+    read -rp "  Choice [1-4]: " share_now
     case "$share_now" in
         1) vps_share_tmate <<< "$vm_name" ;;
         2) vps_share_sshx <<< "$vm_name" ;;
+        3) vps_live_terminal <<< "$vm_name" ;;
         *) : ;;
     esac
 
@@ -641,6 +644,41 @@ show_vps_firewall_submenu() {
     show_vps_firewall_submenu
 }
 
+# Opens a direct, interactive SSH session into the VM right in the current
+# terminal — no tmate, no shareable link, just an immediate live session
+# for the person sitting at this machine.
+vps_live_terminal() {
+    echo ""
+    echo -e "${C_CYAN:-}== Live Terminal (Local) ==${C_RESET:-}"
+    read -rp "  VM name to open: " vm_name
+
+    local vm_ip
+    vm_ip="$(_frosty_vps_ip "$vm_name")"
+    if [[ -z "$vm_ip" ]]; then
+        _frosty_fail "No IP on record for '$vm_name'"
+        return 1
+    fi
+
+    if [[ "$(virsh domstate "$vm_name" 2>/dev/null)" != "running" ]]; then
+        _frosty_warn "'$vm_name' is not running — starting it first..."
+        virsh start "$vm_name" >/dev/null 2>&1
+        sleep 3
+    fi
+
+    echo "    Checking SSH is reachable..."
+    if ! ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes "root@${vm_ip}" "echo ok" >/dev/null 2>&1; then
+        _frosty_fail "Could not reach '$vm_name' at ${vm_ip} over SSH — it may still be booting, or the IP changed"
+        _frosty_warn "Try again in a few seconds, or check 'virsh domifaddr ${vm_name}' for its current IP"
+        return 1
+    fi
+
+    echo -e "    ${C_YELLOW:-}Opening a live terminal into '$vm_name' (${vm_ip}). Type 'exit' to return to Frosty.exe.${C_RESET:-}"
+    echo ""
+    ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -o StrictHostKeyChecking=no -t "root@${vm_ip}" "command -v neofetch >/dev/null 2>&1 && neofetch || (command -v screenfetch >/dev/null 2>&1 && screenfetch); exec bash -l"
+    echo ""
+    _frosty_ok "Returned from live terminal into '$vm_name'"
+}
+
 vps_share_tmate() {
     echo ""
     echo "== Share Terminal via tmate =="
@@ -655,24 +693,70 @@ vps_share_tmate() {
 
     if ! command -v tmate >/dev/null 2>&1; then
         echo "    Installing tmate..."
-        DEBIAN_FRONTEND=noninteractive apt-get install -y tmate >/tmp/frosty_tmate_install.log 2>&1
+        DEBIAN_FRONTEND=noninteractive apt-get update -y >/tmp/frosty_tmate_install.log 2>&1
+        DEBIAN_FRONTEND=noninteractive apt-get install -y tmate >>/tmp/frosty_tmate_install.log 2>&1
+        if ! command -v tmate >/dev/null 2>&1; then
+            _frosty_fail "tmate install failed — see /tmp/frosty_tmate_install.log"
+            return 1
+        fi
     fi
 
     local tmate_sock="/tmp/frosty-tmate-${vm_name}.sock"
+    local ssh_line=""
 
-    if tmate -S "$tmate_sock" display -p '#{tmate_ssh}' >/dev/null 2>&1; then
+    # Checking exit code alone isn't enough — a stale local socket from a
+    # session whose link never actually populated still returns exit 0
+    # with an empty value.
+    ssh_line="$(tmate -S "$tmate_sock" display -p '#{tmate_ssh}' 2>/dev/null)"
+    if [[ -n "$ssh_line" ]]; then
         _frosty_ok "Existing tmate session for '$vm_name' is still alive — reusing it"
     else
+        if [[ -S "$tmate_sock" ]]; then
+            _frosty_warn "Found a stale/dead tmate socket for '$vm_name' — cleaning it up and starting fresh"
+            tmate -S "$tmate_sock" kill-server >/dev/null 2>&1
+        fi
+
+        echo "    Checking connectivity to tmate's relay server..."
+        if ! timeout 6 bash -c "cat < /dev/null > /dev/tcp/tmate.io/22" 2>/dev/null; then
+            _frosty_fail "Cannot reach tmate.io on port 22 from this host"
+            _frosty_warn "This environment's network likely blocks outbound access to tmate's relay servers."
+            return 1
+        fi
+        _frosty_ok "tmate.io is reachable"
+
         echo -e "    ${C_CYAN:-}Starting a new tmate session into VM '$vm_name'...${C_RESET:-}"
         rm -f "$tmate_sock"
-        tmate -S "$tmate_sock" -f /dev/null new-session -d -n frosty-vps "ssh -i ${FROSTY_VPS_DIR}/frosty_vps_key -o StrictHostKeyChecking=no -t root@${vm_ip} 'command -v neofetch >/dev/null 2>&1 && neofetch || screenfetch; exec bash -l'"
-        sleep 3
+        tmate -v -S "$tmate_sock" -f /dev/null new-session -d -n frosty-vps \
+            "ssh -i ${FROSTY_VPS_DIR}/frosty_vps_key -o StrictHostKeyChecking=no -t root@${vm_ip} 'command -v neofetch >/dev/null 2>&1 && neofetch || screenfetch; exec bash -l'" \
+            2>/tmp/frosty_tmate_session.log
+
+        if [[ $? -ne 0 ]]; then
+            _frosty_fail "tmate failed to start a session — see /tmp/frosty_tmate_session.log"
+            return 1
+        fi
+
+        echo -n "    Waiting for tmate to establish the session"
+        local waited=0
+        while [[ ${waited} -lt 20 ]]; do
+            ssh_line="$(tmate -S "$tmate_sock" display -p '#{tmate_ssh}' 2>/dev/null)"
+            [[ -n "$ssh_line" ]] && break
+            echo -n "."
+            sleep 1
+            waited=$((waited + 1))
+        done
+        echo ""
+
+        if [[ -z "$ssh_line" ]]; then
+            _frosty_fail "tmate session did not come up after ${waited}s despite tmate.io being reachable"
+            _frosty_warn "Check /tmp/frosty_tmate_session.log for details."
+            return 1
+        fi
     fi
 
     echo ""
     echo -e "    ${C_YELLOW:-}Anyone with the link/command below gets a live terminal into '$vm_name':${C_RESET:-}"
-    tmate -S "$tmate_sock" display -p '#{tmate_ssh}' 2>/dev/null
-    tmate -S "$tmate_sock" display -p '#{tmate_web}' 2>/dev/null
+    tmate -S "$tmate_sock" display -p '#{tmate_ssh}'
+    tmate -S "$tmate_sock" display -p '#{tmate_web}'
 }
 
 vps_rejoin_tmate() {
@@ -680,17 +764,23 @@ vps_rejoin_tmate() {
     echo "== Rejoin Existing tmate Session =="
     read -rp "  VM name: " vm_name
     local tmate_sock="/tmp/frosty-tmate-${vm_name}.sock"
+    local ssh_line=""
 
-    if [[ ! -S "$tmate_sock" ]] || ! tmate -S "$tmate_sock" display -p '#{tmate_ssh}' >/dev/null 2>&1; then
-        _frosty_warn "No active tmate session found for '$vm_name' — starting a new one instead"
+    if [[ -S "$tmate_sock" ]]; then
+        ssh_line="$(tmate -S "$tmate_sock" display -p '#{tmate_ssh}' 2>/dev/null)"
+    fi
+
+    if [[ -z "$ssh_line" ]]; then
+        _frosty_warn "No live tmate session found for '$vm_name' — starting a new one instead"
+        [[ -S "$tmate_sock" ]] && tmate -S "$tmate_sock" kill-server >/dev/null 2>&1
         rm -f "$tmate_sock"
-        vps_share_tmate
+        vps_share_tmate <<< "$vm_name"
         return 0
     fi
 
     echo -e "    ${C_CYAN:-}Session is alive. Sharing details for '$vm_name':${C_RESET:-}"
-    tmate -S "$tmate_sock" display -p '#{tmate_ssh}'
-    tmate -S "$tmate_sock" display -p '#{tmate_web}'
+    echo "$ssh_line"
+    tmate -S "$tmate_sock" display -p '#{tmate_web}' 2>/dev/null
 }
 
 vps_share_sshx() {
@@ -711,18 +801,34 @@ vps_share_sshx() {
     if [[ -f "$sshx_pidfile" ]] && kill -0 "$(cat "$sshx_pidfile" 2>/dev/null)" 2>/dev/null; then
         _frosty_ok "Existing sshx session for '$vm_name' is still alive"
     else
+        echo "    Checking connectivity to sshx.io..."
+        if ! timeout 6 bash -c "cat < /dev/null > /dev/tcp/sshx.io/443" 2>/dev/null; then
+            _frosty_fail "Cannot reach sshx.io from this host"
+            _frosty_warn "This environment's network likely blocks outbound access to sshx's relay servers."
+            return 1
+        fi
+
         echo -e "    ${C_CYAN:-}Starting a new sshx session into VM '$vm_name'...${C_RESET:-}"
         rm -f "$sshx_log"
         (
             ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -o StrictHostKeyChecking=no -tt "root@${vm_ip}" "command -v sshx >/dev/null 2>&1 || curl -sSf https://sshx.io/get | sh; (command -v neofetch >/dev/null 2>&1 && neofetch || screenfetch) ; sshx" > "$sshx_log" 2>&1
         ) &
         echo $! > "$sshx_pidfile"
-        sleep 8
+
+        echo -n "    Waiting for sshx link"
+        local waited=0 link=""
+        while [[ ${waited} -lt 20 ]]; do
+            link="$(sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' "$sshx_log" 2>/dev/null | grep -oE 'https://sshx\.io/s/[A-Za-z0-9#]+' | tail -1)"
+            [[ -n "$link" ]] && break
+            echo -n "."
+            sleep 1
+            waited=$((waited + 1))
+        done
+        echo ""
     fi
 
-    echo ""
     local link
-    link="$(sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' "$sshx_log" | grep -oE 'https://sshx\.io/s/[A-Za-z0-9#]+' | tail -1)"
+    link="$(sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' "$sshx_log" 2>/dev/null | grep -oE 'https://sshx\.io/s/[A-Za-z0-9#]+' | tail -1)"
     if [[ -n "$link" ]]; then
         echo -e "    ${C_YELLOW:-}Share this link for a live browser terminal into '$vm_name':${C_RESET:-}"
         echo "    $link"
@@ -774,11 +880,12 @@ show_vps_kvm_full_menu() {
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[11]${C_RESET} ${C_WHITE}Rejoin tmate Session${C_RESET}                    ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[12]${C_RESET} ${C_WHITE}Share via sshx${C_RESET}                          ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[13]${C_RESET} ${C_WHITE}Rejoin sshx Session${C_RESET}                     ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[14]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                       ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_GREEN}[14]${C_RESET} ${C_WHITE}Live Terminal (Local)${C_RESET}                   ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[15]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                       ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-14]: " vps_choice
+    read -rp "  Select an option [1-15]: " vps_choice
 
     case "$vps_choice" in
         1) vps_create ;;
@@ -794,7 +901,8 @@ show_vps_kvm_full_menu() {
         11) vps_rejoin_tmate ;;
         12) vps_share_sshx ;;
         13) vps_rejoin_sshx ;;
-        14) return 0 ;;
+        14) vps_live_terminal ;;
+        15) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 
