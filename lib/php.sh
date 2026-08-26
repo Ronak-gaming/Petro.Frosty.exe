@@ -89,11 +89,19 @@ install_php() {
         fi
     else
         _frosty_warn "No systemd — starting php-fpm${FROSTY_PHP_VERSION} manually"
-        if [[ ! -S "/run/php/php${FROSTY_PHP_VERSION}-fpm.sock" ]]; then
+        local fpm_sock="/run/php/php${FROSTY_PHP_VERSION}-fpm.sock"
+        # A socket FILE existing isn't proof anything's listening on it —
+        # a dead process from a previous run leaves a stale socket behind,
+        # which would otherwise skip starting a real php-fpm process.
+        if [[ -S "$fpm_sock" ]] && ! pgrep -f "php-fpm${FROSTY_PHP_VERSION}" >/dev/null 2>&1; then
+            _frosty_warn "Found a stale php-fpm socket with no process behind it — removing it"
+            rm -f "$fpm_sock"
+        fi
+        if ! pgrep -f "php-fpm${FROSTY_PHP_VERSION}" >/dev/null 2>&1; then
             "php-fpm${FROSTY_PHP_VERSION}" -D >/tmp/frosty_php_fpm.log 2>&1
             sleep 2
         fi
-        if [[ -S "/run/php/php${FROSTY_PHP_VERSION}-fpm.sock" ]]; then
+        if [[ -S "$fpm_sock" ]] && pgrep -f "php-fpm${FROSTY_PHP_VERSION}" >/dev/null 2>&1; then
             _frosty_ok "php-fpm${FROSTY_PHP_VERSION} running (socket active)"
         else
             _frosty_fail "php-fpm${FROSTY_PHP_VERSION} failed to start — see /tmp/frosty_php_fpm.log"
