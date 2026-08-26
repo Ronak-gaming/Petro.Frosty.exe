@@ -358,26 +358,66 @@ vps_docker_share_tmate() {
         return 1
     fi
 
+    if [[ "$(docker inspect -f '{{.State.Running}}' "frosty-vps-${vm_name}" 2>/dev/null)" != "true" ]]; then
+        _frosty_warn "'$vm_name' is not running — starting it first..."
+        docker start "frosty-vps-${vm_name}" >/dev/null 2>&1
+        sleep 1
+    fi
+
     if ! command -v tmate >/dev/null 2>&1; then
         echo "    Installing tmate..."
-        DEBIAN_FRONTEND=noninteractive apt-get install -y tmate >/tmp/frosty_tmate_install.log 2>&1
+        DEBIAN_FRONTEND=noninteractive apt-get update -y >/tmp/frosty_tmate_install.log 2>&1
+        DEBIAN_FRONTEND=noninteractive apt-get install -y tmate >>/tmp/frosty_tmate_install.log 2>&1
+        if ! command -v tmate >/dev/null 2>&1; then
+            _frosty_fail "tmate install failed — see /tmp/frosty_tmate_install.log"
+            return 1
+        fi
     fi
 
     local tmate_sock="/tmp/frosty-tmate-docker-${vm_name}.sock"
+    local ssh_line=""
 
     if tmate -S "$tmate_sock" display -p '#{tmate_ssh}' >/dev/null 2>&1; then
         _frosty_ok "Existing tmate session for '$vm_name' is still alive — reusing it"
     else
         echo -e "    ${C_CYAN:-}Starting a new tmate session into VPS '$vm_name'...${C_RESET:-}"
         rm -f "$tmate_sock"
-        tmate -S "$tmate_sock" -f /dev/null new-session -d -n frosty-vps-docker "docker exec -it frosty-vps-${vm_name} bash -c 'command -v neofetch >/dev/null 2>&1 && neofetch || screenfetch; exec bash -l'"
-        sleep 3
+        tmate -S "$tmate_sock" -f /dev/null new-session -d -n frosty-vps-docker \
+            "docker exec -it frosty-vps-${vm_name} bash -c 'command -v neofetch >/dev/null 2>&1 && neofetch || screenfetch; exec bash -l'" \
+            2>/tmp/frosty_tmate_session.log
+
+        if [[ $? -ne 0 ]]; then
+            _frosty_fail "tmate failed to start a session — see /tmp/frosty_tmate_session.log"
+            return 1
+        fi
+
+        # Poll instead of a blind sleep — tmate needs a variable amount of
+        # time to reach its server and generate the link, and a fixed
+        # sleep 3 was frequently too short, leaving the link blank.
+        echo -n "    Waiting for tmate to establish the session"
+        local waited=0
+        while [[ ${waited} -lt 20 ]]; do
+            ssh_line="$(tmate -S "$tmate_sock" display -p '#{tmate_ssh}' 2>/dev/null)"
+            if [[ -n "$ssh_line" ]]; then
+                break
+            fi
+            echo -n "."
+            sleep 1
+            waited=$((waited + 1))
+        done
+        echo ""
+
+        if ! tmate -S "$tmate_sock" display -p '#{tmate_ssh}' >/dev/null 2>&1; then
+            _frosty_fail "tmate session did not come up after ${waited}s — is this host able to reach tmate.io?"
+            _frosty_warn "Check /tmp/frosty_tmate_session.log, and confirm outbound network access is allowed."
+            return 1
+        fi
     fi
 
     echo ""
     echo -e "    ${C_YELLOW:-}Anyone with the link/command below gets a live terminal into '$vm_name':${C_RESET:-}"
-    tmate -S "$tmate_sock" display -p '#{tmate_ssh}' 2>/dev/null
-    tmate -S "$tmate_sock" display -p '#{tmate_web}' 2>/dev/null
+    tmate -S "$tmate_sock" display -p '#{tmate_ssh}'
+    tmate -S "$tmate_sock" display -p '#{tmate_web}'
 }
 
 vps_docker_rejoin_tmate() {
