@@ -62,12 +62,19 @@ install_dependencies() {
         return 0
     fi
 
-    echo "    Installing: ${to_install[*]}"
+        echo "    Installing: ${to_install[*]}"
     if DEBIAN_FRONTEND=noninteractive apt-get install -y "${to_install[@]}" >/tmp/frosty_apt_install.log 2>&1; then
         _frosty_ok "Base packages installed successfully"
     else
-        _frosty_fail "Package installation failed — see /tmp/frosty_apt_install.log"
-        return 1
+        _frosty_warn "First install attempt failed — running apt --fix-broken install and retrying once..."
+        DEBIAN_FRONTEND=noninteractive apt --fix-broken install -y >>/tmp/frosty_apt_install.log 2>&1
+        DEBIAN_FRONTEND=noninteractive apt-get install -y "${to_install[@]}" >>/tmp/frosty_apt_install.log 2>&1
+        if DEBIAN_FRONTEND=noninteractive apt-get install -y "${to_install[@]}" >>/tmp/frosty_apt_install.log 2>&1; then
+            _frosty_ok "Base packages installed successfully (after retry)"
+        else
+            _frosty_fail "Package installation failed after retry — see /tmp/frosty_apt_install.log"
+            return 1
+        fi
     fi
 
     # Re-verify required commands now exist
