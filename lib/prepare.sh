@@ -41,6 +41,11 @@ install_dependencies() {
     echo ""
     echo "== Installing base dependencies =="
 
+    # Repair broken/mismatched package state before attempting anything
+    if ! DEBIAN_FRONTEND=noninteractive apt --fix-broken install -y >/tmp/frosty_apt_fixbroken.log 2>&1; then
+        _frosty_warn "apt --fix-broken install reported issues — see /tmp/frosty_apt_fixbroken.log (continuing anyway)"
+    fi
+
     if ! _frosty_apt_update_once; then
         return 1
     fi
