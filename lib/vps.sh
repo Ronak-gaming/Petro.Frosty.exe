@@ -710,14 +710,20 @@ vps_share_tmate() {
 
     if ! command -v tmate >/dev/null 2>&1; then
         echo "    Installing tmate..."
-        DEBIAN_FRONTEND=noninteractive apt-get update -y >/tmp/frosty_tmate_install.log 2>&1
-        DEBIAN_FRONTEND=noninteractive apt-get install -y tmate >>/tmp/frosty_tmate_install.log 2>&1
-        if ! command -v tmate >/dev/null 2>&1; then
-            _frosty_fail "tmate install failed — see /tmp/frosty_tmate_install.log"
-            return 1
-        fi
+        DEBIAN_FRONTEND=noninteractive apt-get install -y tmate >/tmp/frosty_tmate_install.log 2>&1
     fi
 
+    echo "    Checking connectivity to tmate's relay server..."
+    if ! timeout 5 bash -c "cat < /dev/null > /dev/tcp/tmate.io/22" 2>/dev/null; then
+        _frosty_fail "Cannot reach tmate.io on port 22 from this host"
+        _frosty_warn "This network likely blocks outbound port 22. Use sshx instead — it works over port 443."
+        echo ""
+        read -rp "  Switch to sshx now instead? [y/n]: " switch_choice
+        if [[ "$switch_choice" =~ ^[Yy]$ ]]; then
+            vps_share_sshx <<< "$vm_name"
+        fi
+        return 1
+    fi
     local tmate_sock="/tmp/frosty-tmate-${vm_name}.sock"
     local ssh_line=""
 
