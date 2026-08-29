@@ -319,9 +319,9 @@ CIEOF
         return 1
     fi
 
-    echo "    Waiting for VM to get an IP address (up to 60s)..."
+        echo "    Waiting for VM to get an IP address (up to 120s)..."
     local vm_ip=""
-    for i in $(seq 1 20); do
+    for i in $(seq 1 40); do
         vm_ip="$(virsh domifaddr "$vm_name" 2>/dev/null | awk '/ipv4/{print $4}' | cut -d/ -f1)"
         [[ -n "$vm_ip" ]] && break
         sleep 3
