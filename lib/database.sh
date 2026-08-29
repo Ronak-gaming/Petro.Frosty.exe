@@ -5,6 +5,8 @@ install_database() {
     echo ""
     echo "== Installing MariaDB =="
 
+    dpkg --configure -a >/tmp/frosty_dpkg_fix.log 2>&1
+
     if dpkg -s mariadb-server >/dev/null 2>&1; then
         _frosty_ok "mariadb-server already installed"
     else
@@ -12,8 +14,15 @@ install_database() {
         if DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server mariadb-client >/tmp/frosty_mariadb_install.log 2>&1; then
             _frosty_ok "mariadb-server installed"
         else
-            _frosty_fail "MariaDB installation failed — see /tmp/frosty_mariadb_install.log"
-            return 1
+            _frosty_warn "First install attempt failed — running dpkg repair and retrying once..."
+            dpkg --configure -a >>/tmp/frosty_mariadb_install.log 2>&1
+            DEBIAN_FRONTEND=noninteractive apt --fix-broken install -y >>/tmp/frosty_mariadb_install.log 2>&1
+            if DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server mariadb-client >>/tmp/frosty_mariadb_install.log 2>&1; then
+                _frosty_ok "mariadb-server installed (after retry)"
+            else
+                _frosty_fail "MariaDB installation failed after retry — see /tmp/frosty_mariadb_install.log"
+                return 1
+            fi
         fi
     fi
 
@@ -58,6 +67,8 @@ install_redis() {
     echo ""
     echo "== Installing Redis =="
 
+    dpkg --configure -a >/tmp/frosty_dpkg_fix.log 2>&1
+
     if dpkg -s redis-server >/dev/null 2>&1; then
         _frosty_ok "redis-server already installed"
     else
@@ -65,8 +76,15 @@ install_redis() {
         if DEBIAN_FRONTEND=noninteractive apt-get install -y redis-server >/tmp/frosty_redis_install.log 2>&1; then
             _frosty_ok "redis-server installed"
         else
-            _frosty_fail "Redis installation failed — see /tmp/frosty_redis_install.log"
-            return 1
+            _frosty_warn "First install attempt failed — running dpkg repair and retrying once..."
+            dpkg --configure -a >>/tmp/frosty_redis_install.log 2>&1
+            DEBIAN_FRONTEND=noninteractive apt --fix-broken install -y >>/tmp/frosty_redis_install.log 2>&1
+            if DEBIAN_FRONTEND=noninteractive apt-get install -y redis-server >>/tmp/frosty_redis_install.log 2>&1; then
+                _frosty_ok "redis-server installed (after retry)"
+            else
+                _frosty_fail "Redis installation failed after retry — see /tmp/frosty_redis_install.log"
+                return 1
+            fi
         fi
     fi
 
