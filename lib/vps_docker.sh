@@ -232,11 +232,7 @@ created=$(date '+%Y-%m-%d %H:%M:%S')
 ssh_port=${ssh_port}
 METAEOF
 
-    echo ""
-    echo -e "    ${C_CYAN:-}Connect via SSH with:${C_RESET:-}"
-    echo "      ssh -i ${FROSTY_VPS_DOCKER_DIR}/frosty_vps_key -p ${ssh_port} root@${FROSTY_PUBLIC_IP:-<your-server-ip>}"
-
-    echo ""
+      echo ""
     echo -e "    ${C_CYAN:-}Setting up sharing links automatically...${C_RESET:-}"
     echo ""
     echo -e "    ${C_CYAN:-}-- tmate --${C_RESET:-}"
