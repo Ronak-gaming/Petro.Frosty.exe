@@ -26,6 +26,13 @@ install_database() {
         fi
     fi
 
+    # /run is often an ephemeral tmpfs on minimal/containerized hosts and
+    # may not have this subdirectory or correct ownership even though the
+    # package installed successfully — same class of issue as /run/php.
+    mkdir -p /run/mysqld
+    chown mysql:mysql /run/mysqld 2>/dev/null
+    chmod 755 /run/mysqld 2>/dev/null
+
     if [[ -d /run/systemd/system ]]; then
         systemctl enable mariadb >/dev/null 2>&1
         systemctl restart mariadb >/dev/null 2>&1
@@ -38,6 +45,9 @@ install_database() {
         fi
     else
         _frosty_warn "No systemd — starting mariadb manually"
+        mkdir -p /run/mysqld
+        chown mysql:mysql /run/mysqld 2>/dev/null
+        chmod 755 /run/mysqld 2>/dev/null
         service mariadb start >/dev/null 2>&1
         sleep 3
     fi
