@@ -98,8 +98,9 @@ install_php() {
 
         if [[ -S "$fpm_sock" ]] && pgrep -f "$fpm_pattern" >/dev/null 2>&1; then
             _frosty_ok "php-fpm${FROSTY_PHP_VERSION} already running (socket active)"
-        else
-            _frosty_warn "No systemd — starting php-fpm${FROSTY_PHP_VERSION} manually"
+           else
+        _frosty_warn "No systemd — starting php-fpm${FROSTY_PHP_VERSION} manually"
+        mkdir -p /run/php
 
             # This config has no PID file, so php-fpm has no way to detect
             # an existing instance — deleting just the socket file (without
