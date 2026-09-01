@@ -169,22 +169,15 @@ SVCEOF
             return 1
         fi
     else
-        _frosty_warn "No systemd — starting Wings manually in background"
-        pkill -f "^/usr/local/bin/wings" >/dev/null 2>&1
-        cd /etc/pterodactyl || return 1
-        # FIX: use the full binary path here so it matches the pgrep/pkill
-        # patterns below ("^/usr/local/bin/wings"). Launching bare "wings"
-        # produces a cmdline of just "wings", which never matches that
-        # anchored pattern, so the process check below always reported
-        # failure even when Wings started successfully.
-        nohup /usr/local/bin/wings >/tmp/frosty_wings_run.log 2>&1 &
-        disown
-        sleep 3
-        if pgrep -f "^/usr/local/bin/wings" >/dev/null 2>&1; then
-            _frosty_ok "Wings running (background process)"
-        else
-            _frosty_fail "Wings failed to start — see /tmp/frosty_wings_run.log"
-            [[ -f /tmp/frosty_wings_run.log ]] && tail -15 /tmp/frosty_wings_run.log
+        _frosty_warn "No systemd — starting Wings under pm2 for persistence"
+        load_module "pm2.sh"
+        if ! _frosty_ensure_pm2; then
+            _frosty_fail "pm2 setup failed — cannot start Wings persistently"
+            return 1
+        fi
+        if ! _frosty_pm2_start "wings" "/etc/pterodactyl" "/usr/local/bin/wings"; then
+            echo "    pm2 logs:"
+            pm2 logs wings --lines 20 --nostream 2>/dev/null
             return 1
         fi
     fi
@@ -234,6 +227,10 @@ wings_update() {
     if [[ -d /run/systemd/system ]]; then
         systemctl stop wings >/dev/null 2>&1
     else
+        load_module "pm2.sh"
+        if command -v pm2 >/dev/null 2>&1; then
+            pm2 stop wings >/dev/null 2>&1
+        fi
         pkill -f "^/usr/local/bin/wings" >/dev/null 2>&1
     fi
 
@@ -280,6 +277,11 @@ wings_uninstall() {
         rm -f /etc/systemd/system/wings.service
         systemctl daemon-reload
     else
+        load_module "pm2.sh"
+        if command -v pm2 >/dev/null 2>&1; then
+            pm2 delete wings >/dev/null 2>&1
+            pm2 save >/dev/null 2>&1
+        fi
         pkill -f "^/usr/local/bin/wings" >/dev/null 2>&1
     fi
 
