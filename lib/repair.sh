@@ -6,11 +6,19 @@ repair_all_services() {
     echo -e "${C_CYAN:-}== Frosty Repair: Starting All Services ==${C_RESET:-}"
     echo ""
 
+    load_module "pm2.sh"
+    if [[ ! -d /run/systemd/system ]]; then
+        _frosty_pm2_resurrect
+    fi
+
     # MariaDB
     if mysqladmin ping >/dev/null 2>&1; then
         _frosty_ok "MariaDB already running"
     else
         echo "    Starting MariaDB..."
+        mkdir -p /run/mysqld
+        chown mysql:mysql /run/mysqld 2>/dev/null
+        chmod 755 /run/mysqld 2>/dev/null
         if [[ -d /run/systemd/system ]]; then
             systemctl restart mariadb >/dev/null 2>&1
         else
@@ -59,11 +67,6 @@ repair_all_services() {
     fi
 
     # PHP-FPM
-    # The real process title is "php-fpm: master process (<conf path>)"
-    # with NO version number next to "master" — only the conf path
-    # (which contains the version) distinguishes it. A pattern like
-    # "php-fpm8.3: master" never matches anything real, so both the
-    # liveness check and any pkill using it would silently no-op.
     local fpm_sock="/run/php/php${FROSTY_PHP_VERSION:-8.3}-fpm.sock"
     local fpm_pid="/run/php/php${FROSTY_PHP_VERSION:-8.3}-fpm.pid"
     local fpm_pattern="master process \\(.*php/${FROSTY_PHP_VERSION:-8.3}/fpm/php-fpm\\.conf\\)"
@@ -78,6 +81,7 @@ repair_all_services() {
             pkill -9 -f "$fpm_pattern" 2>/dev/null
         fi
         rm -f "$fpm_sock" "$fpm_pid"
+        mkdir -p /run/php
         echo "    Starting php-fpm..."
         if [[ -d /run/systemd/system ]]; then
             systemctl restart "php${FROSTY_PHP_VERSION:-8.3}-fpm" >/dev/null 2>&1
@@ -119,36 +123,66 @@ repair_all_services() {
 
     # Wings
     if command -v wings >/dev/null 2>&1; then
-        if pgrep -f "^/usr/local/bin/wings" >/dev/null 2>&1 || (command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet wings 2>/dev/null); then
+        local wings_up=0
+        if [[ -d /run/systemd/system ]] && systemctl is-active --quiet wings 2>/dev/null; then
+            wings_up=1
+        elif command -v pm2 >/dev/null 2>&1 && pm2 describe wings 2>/dev/null | grep -q "online"; then
+            wings_up=1
+        elif pgrep -f "^/usr/local/bin/wings" >/dev/null 2>&1; then
+            wings_up=1
+        fi
+
+        if [[ "$wings_up" -eq 1 ]]; then
             _frosty_ok "Wings already running"
         else
             echo "    Starting Wings..."
             if [[ -d /run/systemd/system ]]; then
                 systemctl restart wings >/dev/null 2>&1
+                sleep 3
+                systemctl is-active --quiet wings && _frosty_ok "Wings started" || _frosty_warn "Wings did not start (check config)"
             else
-                cd /etc/pterodactyl 2>/dev/null && nohup wings >/tmp/frosty_wings_repair.log 2>&1 &
+                if command -v pm2 >/dev/null 2>&1; then
+                    _frosty_pm2_start "wings" "/etc/pterodactyl" "/usr/local/bin/wings" >/dev/null 2>&1
+                    sleep 2
+                    pm2 describe wings 2>/dev/null | grep -q "online" && _frosty_ok "Wings started (pm2)" || _frosty_warn "Wings did not start (check config): pm2 logs wings"
+                else
+                    _frosty_warn "pm2 unavailable — cannot persistently restart Wings"
+                fi
             fi
-            sleep 3
-            (pgrep -f "^/usr/local/bin/wings" >/dev/null 2>&1 || systemctl is-active --quiet wings 2>/dev/null) && _frosty_ok "Wings started" || _frosty_warn "Wings did not start (check config)"
         fi
     fi
 
     # Cloudflare Tunnel
     local cf_marker="${HOME}/.frosty_cloudflare_configured"
     if [[ -f "$cf_marker" ]]; then
-        if pgrep -f "cloudflared tunnel run" >/dev/null 2>&1 || (command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet cloudflared 2>/dev/null); then
+        local cf_up=0
+        if [[ -d /run/systemd/system ]] && systemctl is-active --quiet cloudflared 2>/dev/null; then
+            cf_up=1
+        elif command -v pm2 >/dev/null 2>&1 && pm2 describe cloudflared 2>/dev/null | grep -q "online"; then
+            cf_up=1
+        elif pgrep -f "cloudflared tunnel run" >/dev/null 2>&1; then
+            cf_up=1
+        fi
+
+        if [[ "$cf_up" -eq 1 ]]; then
             _frosty_ok "Cloudflare tunnel already running"
         else
             echo "    Starting Cloudflare tunnel..."
+            local cf_token
+            cf_token="$(cat "$cf_marker")"
             if [[ -d /run/systemd/system ]]; then
                 systemctl restart cloudflared >/dev/null 2>&1
+                sleep 3
+                systemctl is-active --quiet cloudflared && _frosty_ok "Cloudflare tunnel started" || _frosty_fail "Cloudflare tunnel failed to start"
             else
-                local cf_token
-                cf_token="$(cat "$cf_marker")"
-                nohup cloudflared tunnel run --token "$cf_token" >/tmp/frosty_cf_repair.log 2>&1 &
+                if command -v pm2 >/dev/null 2>&1; then
+                    _frosty_pm2_start "cloudflared" "${HOME}" "cloudflared" "tunnel" "run" "--token" "$cf_token" >/dev/null 2>&1
+                    sleep 2
+                    pm2 describe cloudflared 2>/dev/null | grep -q "online" && _frosty_ok "Cloudflare tunnel started (pm2)" || _frosty_fail "Cloudflare tunnel failed to start: pm2 logs cloudflared"
+                else
+                    _frosty_warn "pm2 unavailable — cannot persistently restart Cloudflare tunnel"
+                fi
             fi
-            sleep 3
-            (pgrep -f "cloudflared tunnel run" >/dev/null 2>&1 || systemctl is-active --quiet cloudflared 2>/dev/null) && _frosty_ok "Cloudflare tunnel started" || _frosty_fail "Cloudflare tunnel failed to start"
         fi
     fi
 
