@@ -57,6 +57,10 @@ connect_cloudflare_token() {
         systemctl stop cloudflared >/dev/null 2>&1
         cloudflared service uninstall >/dev/null 2>&1
     else
+        load_module "pm2.sh"
+        if command -v pm2 >/dev/null 2>&1; then
+            pm2 delete cloudflared >/dev/null 2>&1
+        fi
         pkill -f "cloudflared tunnel run" >/dev/null 2>&1
     fi
 
@@ -73,29 +77,27 @@ connect_cloudflare_token() {
             _frosty_warn "systemd service failed to start — checking why..."
             journalctl -xeu cloudflared.service --no-pager 2>/dev/null | tail -15
 
-            echo "    Falling back to direct background process..."
+            echo "    Falling back to pm2..."
             systemctl stop cloudflared >/dev/null 2>&1
             systemctl disable cloudflared >/dev/null 2>&1
-            pkill -f "cloudflared tunnel run" >/dev/null 2>&1
-            nohup cloudflared tunnel run --token "$cf_token" >/tmp/frosty_cf_run.log 2>&1 &
-            disown
-            sleep 4
-
-            if pgrep -f "cloudflared tunnel run" >/dev/null 2>&1; then
-                _frosty_ok "Cloudflare tunnel connected via background process (systemd unavailable/failed)"
+            load_module "pm2.sh"
+            if _frosty_ensure_pm2 && _frosty_pm2_start "cloudflared" "${HOME}" "cloudflared" "tunnel" "run" "--token" "$cf_token"; then
+                _frosty_ok "Cloudflare tunnel connected via pm2 (systemd unavailable/failed)"
             else
-                _frosty_fail "Both systemd and background start failed — see /tmp/frosty_cf_install.log and /tmp/frosty_cf_run.log"
+                _frosty_fail "Both systemd and pm2 start failed — see /tmp/frosty_cf_install.log"
                 return 1
             fi
         fi
     else
-        _frosty_warn "No systemd — running tunnel manually in background"
-        nohup cloudflared tunnel run --token "$cf_token" >/tmp/frosty_cf_run.log 2>&1 &
-        sleep 3
-        if pgrep -f "cloudflared tunnel run" >/dev/null 2>&1; then
-            _frosty_ok "Cloudflare tunnel running (background process)"
-        else
-            _frosty_fail "Tunnel failed to start — see /tmp/frosty_cf_run.log"
+        _frosty_warn "No systemd — starting Cloudflare tunnel under pm2 for persistence"
+        load_module "pm2.sh"
+        if ! _frosty_ensure_pm2; then
+            _frosty_fail "pm2 setup failed — cannot start Cloudflare tunnel persistently"
+            return 1
+        fi
+        if ! _frosty_pm2_start "cloudflared" "${HOME}" "cloudflared" "tunnel" "run" "--token" "$cf_token"; then
+            echo "    pm2 logs:"
+            pm2 logs cloudflared --lines 20 --nostream 2>/dev/null
             return 1
         fi
     fi
@@ -117,6 +119,8 @@ cloudflare_status() {
     echo "== Cloudflare Tunnel Status =="
     if [[ -d /run/systemd/system ]] && command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet cloudflared 2>/dev/null; then
         _frosty_ok "Tunnel is running"
+    elif command -v pm2 >/dev/null 2>&1 && pm2 describe cloudflared 2>/dev/null | grep -q "online"; then
+        _frosty_ok "Tunnel is running (pm2)"
     elif pgrep -f "cloudflared tunnel run" >/dev/null 2>&1; then
         _frosty_ok "Tunnel is running"
     else
@@ -133,12 +137,17 @@ cloudflare_remove() {
         return 1
     fi
 
-    pkill -f "cloudflared tunnel run" >/dev/null 2>&1
     if [[ -d /run/systemd/system ]]; then
         systemctl stop cloudflared >/dev/null 2>&1
         systemctl disable cloudflared >/dev/null 2>&1
         cloudflared service uninstall >/dev/null 2>&1
+    else
+        if command -v pm2 >/dev/null 2>&1; then
+            pm2 delete cloudflared >/dev/null 2>&1
+            pm2 save >/dev/null 2>&1
+        fi
     fi
+    pkill -f "cloudflared tunnel run" >/dev/null 2>&1
 
     rm -f "$FROSTY_CF_MARKER"
     _frosty_ok "Cloudflare tunnel removed from this server"
