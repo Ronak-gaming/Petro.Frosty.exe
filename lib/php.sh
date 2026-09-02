@@ -90,59 +90,55 @@ install_php() {
     else
         local fpm_sock="/run/php/php${FROSTY_PHP_VERSION}-fpm.sock"
         local fpm_pid="/run/php/php${FROSTY_PHP_VERSION}-fpm.pid"
-        local fpm_syslog="/var/log/php${FROSTY_PHP_VERSION}-fpm.log"
-        # The real process title is "php-fpm: master process (<conf path>)"
-        # with NO version number next to "master" — only the conf path
-        # (which contains the version) distinguishes it. Match on that.
         local fpm_pattern="master process \\(.*php/${FROSTY_PHP_VERSION}/fpm/php-fpm\\.conf\\)"
 
         if [[ -S "$fpm_sock" ]] && pgrep -f "$fpm_pattern" >/dev/null 2>&1; then
             _frosty_ok "php-fpm${FROSTY_PHP_VERSION} already running (socket active)"
-           else
-        _frosty_warn "No systemd — starting php-fpm${FROSTY_PHP_VERSION} manually"
-        mkdir -p /run/php
+        else
+            _frosty_warn "No systemd — starting php-fpm${FROSTY_PHP_VERSION} under pm2 for persistence"
+            mkdir -p /run/php
 
-            # This config has no PID file, so php-fpm has no way to detect
-            # an existing instance — deleting just the socket file (without
-            # killing the process behind it) orphans the old master, which
-            # keeps running invisibly and piles up with every restart.
-            # Always kill any existing master for this version first.
+            # Kill any orphaned master first — pm2 will manage the new one,
+            # and a stale foreground/background instance would fight it
+            # for the same socket file.
             if pgrep -f "$fpm_pattern" >/dev/null 2>&1; then
                 _frosty_warn "Found existing php-fpm${FROSTY_PHP_VERSION} master process(es) — stopping before restart"
                 pkill -f "$fpm_pattern" 2>/dev/null
                 sleep 1
                 pkill -9 -f "$fpm_pattern" 2>/dev/null
             fi
+            if command -v pm2 >/dev/null 2>&1; then
+                pm2 delete php-fpm >/dev/null 2>&1
+            fi
             rm -f "$fpm_sock" "$fpm_pid"
 
-            "php-fpm${FROSTY_PHP_VERSION}" -D >/tmp/frosty_php_fpm.log 2>&1
-            sleep 2
-
-            if [[ -S "$fpm_sock" ]] && pgrep -f "$fpm_pattern" >/dev/null 2>&1; then
-                _frosty_ok "php-fpm${FROSTY_PHP_VERSION} running (socket active)"
-            else
-                # php-fpm -D detaches from the terminal right after forking,
-                # so real startup errors usually never reach our redirected
-                # log — they go to php-fpm's own configured error log
-                # instead. Pull both, plus a config test, so the actual
-                # cause is visible.
-                _frosty_fail "php-fpm${FROSTY_PHP_VERSION} failed to start"
+            load_module "pm2.sh"
+            if ! _frosty_ensure_pm2; then
+                _frosty_fail "pm2 setup failed — cannot start php-fpm persistently"
+                return 1
+            fi
+            # -F = stay in foreground, required for pm2 to supervise it
+            # (the normal -D daemon flag forks and exits immediately,
+            # which pm2 would just see as an instant crash-loop).
+            if ! _frosty_pm2_start "php-fpm" "/" "php-fpm${FROSTY_PHP_VERSION}" "-F"; then
                 echo "    -- config test (php-fpm${FROSTY_PHP_VERSION} -t) --"
                 "php-fpm${FROSTY_PHP_VERSION}" -t 2>&1 | sed 's/^/    /'
-                if [[ -f "$fpm_syslog" ]]; then
-                    echo "    -- last lines of ${fpm_syslog} --"
-                    tail -15 "$fpm_syslog" 2>/dev/null | sed 's/^/    /'
-                fi
-                if [[ -s /tmp/frosty_php_fpm.log ]]; then
-                    echo "    -- /tmp/frosty_php_fpm.log --"
-                    cat /tmp/frosty_php_fpm.log | sed 's/^/    /'
-                fi
+                echo "    pm2 logs:"
+                pm2 logs php-fpm --lines 20 --nostream 2>/dev/null
+                return 1
+            fi
+
+            sleep 1
+            if [[ -S "$fpm_sock" ]]; then
+                _frosty_ok "php-fpm${FROSTY_PHP_VERSION} running (socket active, pm2)"
+            else
+                _frosty_fail "php-fpm${FROSTY_PHP_VERSION} started under pm2 but socket never appeared"
                 return 1
             fi
         fi
     fi
 
-local missing_ext=()
+    local missing_ext=()
     for ext in "${FROSTY_PHP_REQUIRED_EXT[@]}"; do
         if ! "php${FROSTY_PHP_VERSION}" -m 2>/dev/null | grep -qi "^${ext}$"; then
             missing_ext+=("$ext")
