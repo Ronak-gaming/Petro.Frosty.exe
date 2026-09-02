@@ -84,15 +84,35 @@ NGINXEOF
             return 1
         fi
     else
-        _frosty_warn "No systemd — starting nginx manually"
+        _frosty_warn "No systemd — starting nginx under pm2 for persistence"
+
+        # Kill any bare background nginx from a previous run so pm2 owns
+        # the only instance bound to port 80.
         service nginx stop >/dev/null 2>&1
-        nginx >/tmp/frosty_nginx_run.log 2>&1 &
-        sleep 2
+        pkill -f "nginx: master process" >/dev/null 2>&1
+        sleep 1
+        if command -v pm2 >/dev/null 2>&1; then
+            pm2 delete nginx >/dev/null 2>&1
+        fi
+
+        load_module "pm2.sh"
+        if ! _frosty_ensure_pm2; then
+            _frosty_fail "pm2 setup failed — cannot start nginx persistently"
+            return 1
+        fi
+        # -g 'daemon off;' keeps nginx in the foreground, required for pm2
+        # to supervise it (nginx normally forks and exits immediately,
+        # which pm2 would just see as an instant crash-loop).
+        if ! _frosty_pm2_start "nginx" "/" "nginx" "-g" "daemon off;"; then
+            echo "    pm2 logs:"
+            pm2 logs nginx --lines 20 --nostream 2>/dev/null
+            return 1
+        fi
+        sleep 1
     fi
 
     local http_check
     http_check="$(curl -s -o /dev/null -w '%{http_code}' http://localhost/ 2>/dev/null)"
-
     if [[ "$http_check" == "200" || "$http_check" == "302" ]]; then
         _frosty_ok "Panel responding locally (HTTP $http_check)"
         echo -e "    ${C_CYAN:-}Panel URL: http://${FROSTY_PUBLIC_IP:-YOUR_SERVER_IP}${C_RESET:-}"
