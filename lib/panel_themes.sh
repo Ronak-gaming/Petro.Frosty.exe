@@ -26,13 +26,14 @@ install_blueprint() {
         return 1
     fi
 
-    echo "    Installing Node.js 20 (required by Blueprint)..."
+    echo "    Installing Node.js 22 (required by Blueprint)..."
     if ! command -v node >/dev/null 2>&1 || [[ "$(node -v 2>/dev/null | cut -d. -f1 | tr -d v)" -lt 18 ]]; then
+        DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git gnupg unzip wget zip >/tmp/frosty_blueprint_deps.log 2>&1
         mkdir -p /etc/apt/keyrings
         timeout 60 curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key 2>/dev/null | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg 2>/dev/null
-        echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
+        echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
         DEBIAN_FRONTEND=noninteractive apt-get update -y >/tmp/frosty_blueprint_node.log 2>&1
-        DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs zip unzip >>/tmp/frosty_blueprint_node.log 2>&1
+        DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs >>/tmp/frosty_blueprint_node.log 2>&1
     fi
     if ! command -v node >/dev/null 2>&1; then
         _frosty_fail "Node.js install failed — see /tmp/frosty_blueprint_node.log"
@@ -51,7 +52,7 @@ install_blueprint() {
     _frosty_ok "Yarn: $(yarn -v)"
 
     echo "    Installing panel JS dependencies (this can take a few minutes)..."
-    ( cd "$panel_dir" && timeout 600 yarn --ignore-optional >/tmp/frosty_blueprint_yarndeps.log 2>&1 )
+    ( cd "$panel_dir" && timeout 600 yarn install >/tmp/frosty_blueprint_yarndeps.log 2>&1 )
     if [[ $? -ne 0 ]]; then
         _frosty_fail "yarn install failed — see /tmp/frosty_blueprint_yarndeps.log"
         return 1
@@ -62,19 +63,19 @@ install_blueprint() {
     local latest_url
     latest_url="$(timeout 30 curl -s https://api.github.com/repos/BlueprintFramework/framework/releases/latest | grep 'browser_download_url' | cut -d '"' -f 4 | head -n1)"
     if [[ -z "$latest_url" ]]; then
-        _frosty_fail "Could not resolve the latest Blueprint release from GitHub's API"
-        return 1
+        _frosty_warn "GitHub API didn't return a release URL — falling back to the fixed 'latest' download link"
+        latest_url="https://github.com/BlueprintFramework/framework/releases/latest/download/release.zip"
     fi
 
     echo "    Downloading Blueprint..."
-    if ! timeout 120 curl -L -o /tmp/frosty_blueprint_release.zip "$latest_url" >/tmp/frosty_blueprint_download.log 2>&1; then
+    if ! timeout 120 curl -L -o "${panel_dir}/release.zip" "$latest_url" >/tmp/frosty_blueprint_download.log 2>&1; then
         _frosty_fail "Blueprint download failed or timed out — see /tmp/frosty_blueprint_download.log"
         return 1
     fi
 
     echo "    Extracting Blueprint into the panel..."
-    unzip -o /tmp/frosty_blueprint_release.zip -d "$panel_dir" >/tmp/frosty_blueprint_extract.log 2>&1
-    rm -f /tmp/frosty_blueprint_release.zip
+    ( cd "$panel_dir" && unzip -o release.zip >/tmp/frosty_blueprint_extract.log 2>&1 )
+    rm -f "${panel_dir}/release.zip"
 
     cat > "$FROSTY_BLUEPRINT_RC" << BPRC
 WEBUSER="www-data";
@@ -85,6 +86,7 @@ BPRC
     chown -R www-data:www-data "$panel_dir"
 
     if [[ -f "${panel_dir}/blueprint.sh" ]]; then
+        chmod +x "${panel_dir}/blueprint.sh"
         echo "    Running Blueprint's own installer..."
         ( cd "$panel_dir" && bash blueprint.sh >/tmp/frosty_blueprint_setup.log 2>&1 )
     fi
