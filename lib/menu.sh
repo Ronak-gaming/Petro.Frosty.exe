@@ -8,7 +8,7 @@ show_main_menu() {
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}          ${C_ICE}${C_BOLD}❄  F R O S T Y . E X E  ❄${C_RESET}           ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Pterodactyl (Panel / Wings)${C_RESET}              ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Panels${C_RESET}                                   ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[2]${C_RESET} ${C_WHITE}Toolbox${C_RESET}                                  ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[3]${C_RESET} ${C_WHITE}VPS Installer${C_RESET}                            ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[4]${C_RESET} ${C_WHITE}Repair / Start All Services${C_RESET}              ${C_FROST}${C_BOLD}║${C_RESET}"
@@ -23,7 +23,7 @@ show_main_menu() {
     done
 
     case "$frosty_choice" in
-        1) show_pterodactyl_menu ;;
+        1) show_panels_menu ;;
         2) load_module "toolbox.sh"; show_toolbox_menu ;;
         3) show_vps_type_menu ;;
         4) load_module "repair.sh"; repair_all_services ;;
@@ -59,25 +59,48 @@ show_vps_type_menu() {
     esac
 }
 
+show_panels_menu() {
+    clear
+    print_banner
+    echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}              ${C_ICE}${C_BOLD}❄  P A N E L S  ❄${C_RESET}                 ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Petro (Pterodactyl)${C_RESET}                      ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[2]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                        ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
+    echo ""
+    read -rp "  Select an option [1-2]: " panels_choice
+
+    case "$panels_choice" in
+        1) show_pterodactyl_menu ;;
+        2) return 0 ;;
+        *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
+    esac
+}
+
 show_pterodactyl_menu() {
     clear
     print_banner
     echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}        ${C_ICE}${C_BOLD}❄  P T E R O D A C T Y L  ❄${C_RESET}           ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}             ${C_ICE}${C_BOLD}❄  P E T R O  ❄${C_RESET}                   ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Panel${C_RESET}                                    ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[2]${C_RESET} ${C_WHITE}Wings${C_RESET}                                    ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[3]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                        ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[3]${C_RESET} ${C_WHITE}Themes & Extensions${C_RESET}                      ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[4]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                        ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-3]: " pty_choice
+    read -rp "  Select an option [1-4]: " pty_choice
 
     case "$pty_choice" in
         1) run_panel_flow ;;
         2) run_wings_flow ;;
-        3) return 0 ;;
+        3) load_module "panel_themes.sh"; run_themes_flow ;;
+        4) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 }
@@ -200,7 +223,8 @@ run_wings_flow() {
     echo -e "${C_YELLOW}Now go to your Cloudflare Tunnel dashboard (one.dash.cloudflare.com${C_RESET}"
     echo -e "${C_YELLOW}-> Networks -> Tunnels -> your tunnel -> Public Hostname tab) and add:${C_RESET}"
     echo -e "${C_CYAN}    Subdomain/domain: ${wings_fqdn}${C_RESET}"
-    echo -e "${C_CYAN}    Service: https://localhost:8443  (or http://localhost:8080)${C_RESET}"
+    echo -e "${C_CYAN}    Service: http://localhost:8443${C_RESET}"
+    echo -e "${C_YELLOW}    (must be http:// — Wings has SSL disabled since Cloudflare terminates HTTPS)${C_RESET}"
     echo ""
     read -rp "  Press Enter once you've added that route in Cloudflare..." _
 
