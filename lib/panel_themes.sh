@@ -4,7 +4,10 @@ set -uo pipefail
 FROSTY_BLUEPRINT_RC="${FROSTY_PANEL_DIR:-/var/www/pterodactyl}/.blueprintrc"
 
 blueprint_installed() {
-    command -v blueprint >/dev/null 2>&1 || [[ -f "$FROSTY_BLUEPRINT_RC" ]]
+    # Only trust the actual CLI command being present. .blueprintrc is
+    # written by OUR script before blueprint.sh even runs — its existence
+    # proves we started the install, not that it actually succeeded.
+    command -v blueprint >/dev/null 2>&1
 }
 
 # Installs the Blueprint modding framework (official, open-source:
@@ -108,8 +111,13 @@ BPRC
         chmod +x "${panel_dir}/blueprint.sh"
         echo "    Running Blueprint's own installer..."
         ( cd "$panel_dir" && bash blueprint.sh >/tmp/frosty_blueprint_setup.log 2>&1 )
+    else
+        _frosty_fail "blueprint.sh not found after extraction — the downloaded release may be structured differently than expected"
+        echo "    -- contents of ${panel_dir} (top level) --"
+        ls -la "$panel_dir" | head -20 | sed 's/^/    /'
     fi
 
+    hash -r
     if command -v blueprint >/dev/null 2>&1; then
         _frosty_ok "Blueprint installed: $(blueprint -v 2>/dev/null || echo 'version unknown')"
         return 0
