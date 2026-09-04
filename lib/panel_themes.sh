@@ -62,22 +62,21 @@ install_blueprint() {
     fi
     _frosty_ok "Panel JS dependencies installed"
 
-    echo "    Fetching latest Blueprint release info..."
-    local latest_url
-    latest_url="$(timeout 30 curl -s https://api.github.com/repos/BlueprintFramework/framework/releases/latest | grep 'browser_download_url' | cut -d '"' -f 4 | head -n1)"
-    if [[ -z "$latest_url" ]]; then
-        _frosty_warn "GitHub API didn't return a release URL (often rate-limiting) — falling back to the fixed 'latest' download link"
-        latest_url="https://github.com/BlueprintFramework/framework/releases/latest/download/release.zip"
-    fi
-
     echo "    Downloading Blueprint..."
     rm -f "${panel_dir}/release.zip"
+    # Use the officially documented stable URL directly, rather than
+    # parsing the GitHub API's asset list — a release can have multiple
+    # files attached (release.zip, checksum.txt, source archives), and
+    # grabbing "the first browser_download_url" isn't guaranteed to be
+    # release.zip. This exact URL is what Blueprint's own install guide
+    # (blueprint.zip/guides/admin/install) documents and always resolves
+    # to the correct current asset.
+    local latest_url="https://github.com/BlueprintFramework/framework/releases/latest/download/release.zip"
     # -f makes curl FAIL on a non-2xx response instead of silently saving
     # the error page (a 404/rate-limit HTML page) as if it were the zip —
     # without -f, a failed download still exits 0 and looks like success.
     if ! timeout 120 curl -fL -o "${panel_dir}/release.zip" "$latest_url" >/tmp/frosty_blueprint_download.log 2>&1; then
         _frosty_fail "Blueprint download failed (HTTP error or timeout) — see /tmp/frosty_blueprint_download.log"
-        _frosty_warn "This is often GitHub API rate-limiting on shared IPs (Codespaces, CI, etc.) — wait a bit and retry, or try again from a different network"
         return 1
     fi
 
