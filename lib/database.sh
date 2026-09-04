@@ -26,9 +26,6 @@ install_database() {
         fi
     fi
 
-    # /run is often an ephemeral tmpfs on minimal/containerized hosts and
-    # may not have this subdirectory or correct ownership even though the
-    # package installed successfully — same class of issue as /run/php.
     mkdir -p /run/mysqld
     chown mysql:mysql /run/mysqld 2>/dev/null
     chmod 755 /run/mysqld 2>/dev/null
@@ -44,12 +41,30 @@ install_database() {
             return 1
         fi
     else
-        _frosty_warn "No systemd — starting mariadb manually"
-        mkdir -p /run/mysqld
-        chown mysql:mysql /run/mysqld 2>/dev/null
-        chmod 755 /run/mysqld 2>/dev/null
-        service mariadb start >/dev/null 2>&1
-        sleep 3
+        _frosty_warn "No systemd — starting MariaDB under pm2 for persistence"
+
+        # Kill any bare background mariadbd from a previous run so pm2
+        # owns the only instance bound to the socket.
+        service mariadb stop >/dev/null 2>&1
+        pkill -f "mariadbd" >/dev/null 2>&1
+        sleep 1
+        if command -v pm2 >/dev/null 2>&1; then
+            pm2 delete mariadb >/dev/null 2>&1
+        fi
+
+        load_module "pm2.sh"
+        if ! _frosty_ensure_pm2; then
+            _frosty_fail "pm2 setup failed — cannot start MariaDB persistently"
+            return 1
+        fi
+        # mariadbd runs in the foreground by default (no daemon flag),
+        # which is exactly what pm2 needs to supervise it.
+        if ! _frosty_pm2_start "mariadb" "/" "/usr/sbin/mariadbd" "--user=mysql"; then
+            echo "    pm2 logs:"
+            pm2 logs mariadb --lines 20 --nostream 2>/dev/null
+            return 1
+        fi
+        sleep 2
     fi
 
     local mysql_ready=0
@@ -67,6 +82,10 @@ install_database() {
         _frosty_ok "MariaDB responding: $ver"
     else
         _frosty_fail "MariaDB not responding to ping after install"
+        if [[ ! -d /run/systemd/system ]] && command -v pm2 >/dev/null 2>&1; then
+            echo "    pm2 logs:"
+            pm2 logs mariadb --lines 20 --nostream 2>/dev/null
+        fi
         return 1
     fi
 
@@ -109,9 +128,28 @@ install_redis() {
             return 1
         fi
     else
-        _frosty_warn "No systemd — starting redis manually"
-        redis-server --daemonize yes >/dev/null 2>&1
-        sleep 2
+        _frosty_warn "No systemd — starting Redis under pm2 for persistence"
+
+        pkill -f "redis-server" >/dev/null 2>&1
+        sleep 1
+        if command -v pm2 >/dev/null 2>&1; then
+            pm2 delete redis >/dev/null 2>&1
+        fi
+
+        load_module "pm2.sh"
+        if ! _frosty_ensure_pm2; then
+            _frosty_fail "pm2 setup failed — cannot start Redis persistently"
+            return 1
+        fi
+        # Explicitly pass --daemonize no so redis-server stays in the
+        # foreground — its default without any flag is already
+        # foreground, but this makes the intent unambiguous for pm2.
+        if ! _frosty_pm2_start "redis" "/" "redis-server" "--daemonize" "no"; then
+            echo "    pm2 logs:"
+            pm2 logs redis --lines 20 --nostream 2>/dev/null
+            return 1
+        fi
+        sleep 1
     fi
 
     local redis_ready=0
@@ -127,6 +165,10 @@ install_redis() {
         _frosty_ok "Redis responding (PONG)"
     else
         _frosty_fail "Redis not responding to ping after install"
+        if [[ ! -d /run/systemd/system ]] && command -v pm2 >/dev/null 2>&1; then
+            echo "    pm2 logs:"
+            pm2 logs redis --lines 20 --nostream 2>/dev/null
+        fi
         return 1
     fi
 
