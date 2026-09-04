@@ -12,7 +12,7 @@ repair_all_services() {
     fi
 
     # MariaDB
-    if mysqladmin ping >/dev/null 2>&1; then
+       if mysqladmin ping >/dev/null 2>&1; then
         _frosty_ok "MariaDB already running"
     else
         echo "    Starting MariaDB..."
@@ -21,13 +21,14 @@ repair_all_services() {
         chmod 755 /run/mysqld 2>/dev/null
         if [[ -d /run/systemd/system ]]; then
             systemctl restart mariadb >/dev/null 2>&1
+        elif command -v pm2 >/dev/null 2>&1; then
+            _frosty_pm2_start "mariadb" "/" "/usr/sbin/mariadbd" "--user=mysql" >/dev/null 2>&1
         else
             service mariadb start >/dev/null 2>&1
         fi
         sleep 3
         mysqladmin ping >/dev/null 2>&1 && _frosty_ok "MariaDB started" || _frosty_fail "MariaDB failed to start"
     fi
-
     # Redis
     if redis-cli ping 2>/dev/null | grep -q PONG; then
         _frosty_ok "Redis already running"
