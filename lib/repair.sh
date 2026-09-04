@@ -30,19 +30,20 @@ repair_all_services() {
         mysqladmin ping >/dev/null 2>&1 && _frosty_ok "MariaDB started" || _frosty_fail "MariaDB failed to start"
     fi
     # Redis
-    if redis-cli ping 2>/dev/null | grep -q PONG; then
+        if redis-cli ping 2>/dev/null | grep -q PONG; then
         _frosty_ok "Redis already running"
     else
         echo "    Starting Redis..."
         if [[ -d /run/systemd/system ]]; then
             systemctl restart redis-server >/dev/null 2>&1
+        elif command -v pm2 >/dev/null 2>&1; then
+            _frosty_pm2_start "redis" "/" "redis-server" "--daemonize" "no" >/dev/null 2>&1
         else
             redis-server --daemonize yes >/dev/null 2>&1
         fi
         sleep 2
         redis-cli ping 2>/dev/null | grep -q PONG && _frosty_ok "Redis started" || _frosty_fail "Redis failed to start"
     fi
-
     # Docker
     if docker info >/dev/null 2>&1; then
         _frosty_ok "Docker already running"
