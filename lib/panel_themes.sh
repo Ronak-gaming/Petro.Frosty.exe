@@ -63,13 +63,32 @@ install_blueprint() {
     local latest_url
     latest_url="$(timeout 30 curl -s https://api.github.com/repos/BlueprintFramework/framework/releases/latest | grep 'browser_download_url' | cut -d '"' -f 4 | head -n1)"
     if [[ -z "$latest_url" ]]; then
-        _frosty_warn "GitHub API didn't return a release URL — falling back to the fixed 'latest' download link"
+        _frosty_warn "GitHub API didn't return a release URL (often rate-limiting) — falling back to the fixed 'latest' download link"
         latest_url="https://github.com/BlueprintFramework/framework/releases/latest/download/release.zip"
     fi
 
     echo "    Downloading Blueprint..."
-    if ! timeout 120 curl -L -o "${panel_dir}/release.zip" "$latest_url" >/tmp/frosty_blueprint_download.log 2>&1; then
-        _frosty_fail "Blueprint download failed or timed out — see /tmp/frosty_blueprint_download.log"
+    rm -f "${panel_dir}/release.zip"
+    # -f makes curl FAIL on a non-2xx response instead of silently saving
+    # the error page (a 404/rate-limit HTML page) as if it were the zip —
+    # without -f, a failed download still exits 0 and looks like success.
+    if ! timeout 120 curl -fL -o "${panel_dir}/release.zip" "$latest_url" >/tmp/frosty_blueprint_download.log 2>&1; then
+        _frosty_fail "Blueprint download failed (HTTP error or timeout) — see /tmp/frosty_blueprint_download.log"
+        _frosty_warn "This is often GitHub API rate-limiting on shared IPs (Codespaces, CI, etc.) — wait a bit and retry, or try again from a different network"
+        return 1
+    fi
+
+    # Verify we actually got a real zip before trying to extract it — a
+    # corrupted/HTML-error download will fail here with a clear message
+    # instead of a cryptic unzip error later.
+    if ! unzip -t "${panel_dir}/release.zip" >/tmp/frosty_blueprint_verify.log 2>&1; then
+        _frosty_fail "Downloaded file isn't a valid zip — see /tmp/frosty_blueprint_verify.log"
+        echo "    -- what we actually got (first 300 bytes) --"
+        head -c 300 "${panel_dir}/release.zip" | sed 's/^/    /'
+        echo ""
+        echo "    -- file info --"
+        file "${panel_dir}/release.zip" 2>/dev/null | sed 's/^/    /'
+        _frosty_warn "Kept at ${panel_dir}/release.zip for inspection — this is likely GitHub rate-limiting; wait and retry"
         return 1
     fi
 
