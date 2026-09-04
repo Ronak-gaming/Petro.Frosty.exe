@@ -170,7 +170,29 @@ blueprint_install_from_file() {
         return 1
     fi
 
-    read -rp "  Full path to the .blueprint file on this server: " bp_path
+    echo "  How do you want to get the file onto this server?"
+    echo "  [1] It's already here — I'll give you the path"
+    echo "  [2] Upload it via browser (no SCP needed)"
+    read -rp "  Choice [1-2]: " transfer_choice
+
+    local bp_path=""
+    case "$transfer_choice" in
+        1)
+            read -rp "  Full path to the .blueprint file on this server: " bp_path
+            ;;
+        2)
+            bp_path="$(blueprint_receive_upload)"
+            if [[ -z "$bp_path" ]]; then
+                _frosty_fail "No file was received"
+                return 1
+            fi
+            ;;
+        *)
+            _frosty_fail "Invalid choice"
+            return 1
+            ;;
+    esac
+
     if [[ ! -f "$bp_path" ]]; then
         _frosty_fail "File not found: ${bp_path}"
         _frosty_warn "Upload the purchased .blueprint file to this server first (e.g. via scp), then re-run with its path"
@@ -186,6 +208,132 @@ blueprint_install_from_file() {
     else
         _frosty_fail "Install failed — see /tmp/frosty_blueprint_install_file.log"
         return 1
+    fi
+}
+
+# Spins up a temporary, single-use web page the client can open in their
+# browser to drag-and-drop the purchased file straight onto this server —
+# no SCP, no SSH client, no command line needed on their end at all.
+# Prints the received file's path to stdout so callers can capture it.
+blueprint_receive_upload() {
+    local upload_dir="/tmp/frosty_uploads"
+    mkdir -p "$upload_dir"
+    rm -f "${upload_dir}"/*.blueprint 2>/dev/null
+
+    local port=8899
+    while ss -ltn 2>/dev/null | grep -q ":${port} "; do
+        port=$((port + 1))
+    done
+
+    local pubip="${FROSTY_PUBLIC_IP:-$(curl -s --max-time 5 ifconfig.me 2>/dev/null)}"
+
+    cat > /tmp/frosty_upload_server.py << 'PYEOF'
+import http.server, sys, os, re
+
+UPLOAD_DIR = sys.argv[2] if len(sys.argv) > 2 else "/tmp/frosty_uploads"
+
+PAGE = """<!DOCTYPE html><html><head><title>Frosty.exe - File Upload</title>
+<style>body{font-family:sans-serif;background:#0b1220;color:#eee;display:flex;
+align-items:center;justify-content:center;height:100vh;margin:0}
+.box{background:#151f30;padding:2rem 3rem;border-radius:12px;text-align:center}
+input[type=file]{margin:1rem 0}button{background:#38bdf8;border:none;padding:0.6rem 1.4rem;
+border-radius:6px;font-weight:bold;cursor:pointer}</style></head>
+<body><div class="box"><h2>Upload .blueprint file</h2>
+<form method="POST" enctype="multipart/form-data">
+<input type="file" name="file" accept=".blueprint,.zip"><br>
+<button type="submit">Upload</button></form></div></body></html>"""
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.end_headers()
+        self.wfile.write(PAGE.encode())
+
+    def do_POST(self):
+        # Manual multipart/form-data parsing — avoids the 'cgi' module,
+        # which is deprecated and removed entirely in Python 3.13+.
+        content_type = self.headers.get("Content-Type", "")
+        m = re.search(r"boundary=(.+)", content_type)
+        if not m:
+            self.send_response(400)
+            self.end_headers()
+            return
+        boundary = m.group(1).strip('"').encode()
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length)
+
+        parts = body.split(b"--" + boundary)
+        filename = None
+        filedata = None
+        for part in parts:
+            if b'name="file"' not in part:
+                continue
+            fm = re.search(rb'filename="([^"]+)"', part)
+            if not fm:
+                continue
+            filename = fm.group(1).decode(errors="replace")
+            idx = part.find(b"\r\n\r\n")
+            if idx == -1:
+                continue
+            filedata = part[idx + 4:]
+            if filedata.endswith(b"\r\n"):
+                filedata = filedata[:-2]
+            break
+
+        if filename and filedata is not None:
+            fname = os.path.basename(filename)
+            dest = os.path.join(UPLOAD_DIR, fname)
+            with open(dest, "wb") as f:
+                f.write(filedata)
+            with open(os.path.join(UPLOAD_DIR, ".received"), "w") as f:
+                f.write(dest)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(b"<h2>Uploaded. You can close this tab.</h2>")
+        else:
+            self.send_response(400)
+            self.end_headers()
+
+    def log_message(self, *a):
+        pass
+
+http.server.HTTPServer(("0.0.0.0", int(sys.argv[1])), Handler).serve_forever()
+PYEOF
+
+    python3 /tmp/frosty_upload_server.py "$port" "$upload_dir" >/tmp/frosty_upload_server.log 2>&1 &
+    local server_pid=$!
+
+    echo "" >&2
+    echo -e "    ${C_YELLOW:-}Open this link in a browser and upload the file:${C_RESET:-}" >&2
+    echo -e "    ${C_CYAN:-}http://${pubip}:${port}${C_RESET:-}" >&2
+    echo -e "    ${C_YELLOW:-}(If that doesn't load, this port may need to be reachable —${C_RESET:-}" >&2
+    echo -e "    ${C_YELLOW:-} same networking rules as everything else on this server.)${C_RESET:-}" >&2
+    echo -n "    Waiting for upload (up to 5 minutes)" >&2
+
+    local waited=0
+    while [[ ${waited} -lt 300 ]]; do
+        if [[ -f "${upload_dir}/.received" ]]; then
+            break
+        fi
+        echo -n "." >&2
+        sleep 2
+        waited=$((waited + 2))
+    done
+    echo "" >&2
+
+    kill "$server_pid" 2>/dev/null
+
+    if [[ -f "${upload_dir}/.received" ]]; then
+        local received_path
+        received_path="$(cat "${upload_dir}/.received")"
+        rm -f "${upload_dir}/.received"
+        echo -e "    ${C_GREEN:-}Received: ${received_path}${C_RESET:-}" >&2
+        echo "$received_path"
+    else
+        echo -e "    ${C_RED:-}No upload received within 5 minutes.${C_RESET:-}" >&2
+        echo ""
     fi
 }
 
