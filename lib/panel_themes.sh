@@ -118,6 +118,13 @@ BPRC
 
     hash -r
     if command -v blueprint >/dev/null 2>&1; then
+        # blueprint.sh has been observed to create the CLI symlink/binary
+        # without its execute bit set — force it, since even root can't
+        # run a file missing +x. Harmless if it's already executable.
+        chmod +x "$(command -v blueprint)" 2>/dev/null
+    fi
+
+    if command -v blueprint >/dev/null 2>&1; then
         _frosty_ok "Blueprint installed: $(blueprint -v 2>/dev/null || echo 'version unknown')"
         return 0
     else
@@ -147,6 +154,7 @@ blueprint_install_open_extension() {
         _frosty_fail "Blueprint isn't installed — install it first (option 1)"
         return 1
     fi
+    chmod +x "$(command -v blueprint)" 2>/dev/null
 
     echo ""
     echo -e "${C_CYAN:-}== Installing extension: ${key} ==${C_RESET:-}"
