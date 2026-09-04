@@ -60,10 +60,28 @@ _frosty_pm2_start() {
     if pm2 describe "$name" >/dev/null 2>&1; then
         pm2 restart "$name" >/dev/null 2>&1
     else
-        pm2 start "${cmd[0]}" --name "$name" --cwd "$cwd" -- "${cmd[@]:1}" >/dev/null 2>&1
+        # Only append "-- <args>" when there actually ARE extra args —
+        # an empty "${cmd[@]:1}" after "--" still emits a stray empty-string
+        # token to pm2's arg parser, which was silently breaking
+        # registration for no-arg commands like plain "wings".
+        if [[ ${#cmd[@]} -gt 1 ]]; then
+            pm2 start "${cmd[0]}" --name "$name" --cwd "$cwd" -- "${cmd[@]:1}" >/dev/null 2>&1
+        else
+            pm2 start "${cmd[0]}" --name "$name" --cwd "$cwd" >/dev/null 2>&1
+        fi
     fi
 
-    sleep 2
+    # pm2 start/restart can return before the process table is fully
+    # updated — poll briefly instead of a single fixed-delay check.
+    local waited=0
+    while [[ $waited -lt 10 ]]; do
+        if pm2 describe "$name" 2>/dev/null | grep -q "online"; then
+            break
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+
     pm2 save >/dev/null 2>&1
 
     if pm2 describe "$name" 2>/dev/null | grep -q "online"; then
