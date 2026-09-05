@@ -2,18 +2,35 @@
 set -uo pipefail
 
 FROSTY_BLUEPRINT_RC="${FROSTY_PANEL_DIR:-/var/www/pterodactyl}/.blueprintrc"
+FROSTY_BLUEPRINT_BIN="/usr/local/bin/blueprint"
 
-blueprint_installed() {
-    # Only trust the actual CLI command being present. .blueprintrc is
-    # written by OUR script before blueprint.sh even runs — its existence
-    # proves we started the install, not that it actually succeeded.
-    command -v blueprint >/dev/null 2>&1
+# Resolves a working blueprint command — prefers the fixed install
+# location directly instead of relying on PATH/`command -v`, since PATH
+# has proven inconsistent in this environment (a file can exist on disk
+# at the known path while `which`/`command -v` still fail to find it).
+# Also force-fixes the exec bit, since blueprint.sh has been observed to
+# create this file without it set.
+_frosty_blueprint_cmd() {
+    if [[ -f "$FROSTY_BLUEPRINT_BIN" ]]; then
+        chmod +x "$FROSTY_BLUEPRINT_BIN" 2>/dev/null
+        echo "$FROSTY_BLUEPRINT_BIN"
+        return 0
+    fi
+    if command -v blueprint >/dev/null 2>&1; then
+        local resolved
+        resolved="$(command -v blueprint)"
+        chmod +x "$resolved" 2>/dev/null
+        echo "$resolved"
+        return 0
+    fi
+    echo ""
+    return 1
 }
 
-# Installs the Blueprint modding framework (official, open-source:
-# https://github.com/BlueprintFramework/framework). This is what makes
-# themes/extensions installable in the first place — nothing else in
-# this menu works without it.
+blueprint_installed() {
+    [[ -n "$(_frosty_blueprint_cmd)" ]]
+}
+
 install_blueprint() {
     echo ""
     echo -e "${C_CYAN:-}== Installing Blueprint Framework ==${C_RESET:-}"
@@ -64,33 +81,19 @@ install_blueprint() {
 
     echo "    Downloading Blueprint..."
     rm -f "${panel_dir}/release.zip"
-    # Use the officially documented stable URL directly, rather than
-    # parsing the GitHub API's asset list — a release can have multiple
-    # files attached (release.zip, checksum.txt, source archives), and
-    # grabbing "the first browser_download_url" isn't guaranteed to be
-    # release.zip. This exact URL is what Blueprint's own install guide
-    # (blueprint.zip/guides/admin/install) documents and always resolves
-    # to the correct current asset.
     local latest_url="https://github.com/BlueprintFramework/framework/releases/latest/download/release.zip"
-    # -f makes curl FAIL on a non-2xx response instead of silently saving
-    # the error page (a 404/rate-limit HTML page) as if it were the zip —
-    # without -f, a failed download still exits 0 and looks like success.
     if ! timeout 120 curl -fL -o "${panel_dir}/release.zip" "$latest_url" >/tmp/frosty_blueprint_download.log 2>&1; then
         _frosty_fail "Blueprint download failed (HTTP error or timeout) — see /tmp/frosty_blueprint_download.log"
         return 1
     fi
 
-    # Verify we actually got a real zip before trying to extract it — a
-    # corrupted/HTML-error download will fail here with a clear message
-    # instead of a cryptic unzip error later.
     if ! unzip -t "${panel_dir}/release.zip" >/tmp/frosty_blueprint_verify.log 2>&1; then
         _frosty_fail "Downloaded file isn't a valid zip — see /tmp/frosty_blueprint_verify.log"
         echo "    -- what we actually got (first 300 bytes) --"
         head -c 300 "${panel_dir}/release.zip" | sed 's/^/    /'
         echo ""
-        echo "    -- file info --"
         file "${panel_dir}/release.zip" 2>/dev/null | sed 's/^/    /'
-        _frosty_warn "Kept at ${panel_dir}/release.zip for inspection — this is likely GitHub rate-limiting; wait and retry"
+        _frosty_warn "Kept at ${panel_dir}/release.zip for inspection"
         return 1
     fi
 
@@ -111,24 +114,20 @@ BPRC
         echo "    Running Blueprint's own installer..."
         ( cd "$panel_dir" && bash blueprint.sh >/tmp/frosty_blueprint_setup.log 2>&1 )
     else
-        _frosty_fail "blueprint.sh not found after extraction — the downloaded release may be structured differently than expected"
-        echo "    -- contents of ${panel_dir} (top level) --"
+        _frosty_fail "blueprint.sh not found after extraction"
         ls -la "$panel_dir" | head -20 | sed 's/^/    /'
     fi
 
     hash -r
-    if command -v blueprint >/dev/null 2>&1; then
-        # blueprint.sh has been observed to create the CLI symlink/binary
-        # without its execute bit set — force it, since even root can't
-        # run a file missing +x. Harmless if it's already executable.
-        chmod +x "$(command -v blueprint)" 2>/dev/null
-    fi
-
-    if command -v blueprint >/dev/null 2>&1; then
-        _frosty_ok "Blueprint installed: $(blueprint -v 2>/dev/null || echo 'version unknown')"
+    local bp_bin
+    bp_bin="$(_frosty_blueprint_cmd)"
+    if [[ -n "$bp_bin" ]]; then
+        _frosty_ok "Blueprint installed: $("$bp_bin" -v 2>/dev/null || echo 'version unknown')"
         return 0
     else
-        _frosty_fail "Blueprint install did not complete — check /tmp/frosty_blueprint_setup.log and /tmp/frosty_blueprint_extract.log"
+        _frosty_fail "Blueprint install did not complete — check /tmp/frosty_blueprint_setup.log"
+        echo "    -- searching for a blueprint binary --"
+        find "$panel_dir" /usr/local/bin -maxdepth 2 -iname "blueprint*" 2>/dev/null | sed 's/^/    /'
         return 1
     fi
 }
@@ -136,51 +135,47 @@ BPRC
 blueprint_list_installed() {
     echo ""
     echo -e "${C_CYAN:-}== Installed Extensions/Themes ==${C_RESET:-}"
-    if ! blueprint_installed; then
+    local bp_bin
+    bp_bin="$(_frosty_blueprint_cmd)"
+    if [[ -z "$bp_bin" ]]; then
         _frosty_warn "Blueprint isn't installed yet"
         return 1
     fi
-    blueprint -list 2>&1 || echo "  (Blueprint didn't return a list — try 'blueprint -list' manually)"
+    "$bp_bin" -list 2>&1
 }
 
-# Installs a free/open-source extension straight from its known GitHub
-# source. Only extensions that are genuinely open and publicly
-# downloadable belong in this list — nothing paid/marketplace-gated.
 blueprint_install_open_extension() {
     local key="$1"
     local panel_dir="${FROSTY_PANEL_DIR:-/var/www/pterodactyl}"
-
-    if ! blueprint_installed; then
+    local bp_bin
+    bp_bin="$(_frosty_blueprint_cmd)"
+    if [[ -z "$bp_bin" ]]; then
         _frosty_fail "Blueprint isn't installed — install it first (option 1)"
         return 1
     fi
-    chmod +x "$(command -v blueprint)" 2>/dev/null
 
     echo ""
     echo -e "${C_CYAN:-}== Installing extension: ${key} ==${C_RESET:-}"
-    ( cd "$panel_dir" && timeout 120 blueprint -install "$key" 2>&1 | tee "/tmp/frosty_blueprint_install_${key}.log" )
+    ( cd "$panel_dir" && timeout 120 "$bp_bin" -install "$key" 2>&1 | tee "/tmp/frosty_blueprint_install_${key}.log" )
     local rc=${PIPESTATUS[0]}
 
     if [[ $rc -eq 0 ]]; then
         _frosty_ok "'${key}' installed"
     else
-        _frosty_fail "'${key}' install failed or wasn't found — see /tmp/frosty_blueprint_install_${key}.log"
+        _frosty_fail "'${key}' install failed — see /tmp/frosty_blueprint_install_${key}.log"
         return 1
     fi
 }
 
-# For paid/marketplace themes (Nebula, Simple Visuals, Champion, etc.) —
-# there is no public download URL for these, so this can't be automated.
-# The client has to own a legitimate license and provide the .blueprint
-# file themselves; this just runs the actual install step for them.
 blueprint_install_from_file() {
     echo ""
     echo -e "${C_CYAN:-}== Install Purchased Theme/Extension (.blueprint file) ==${C_RESET:-}"
-    echo -e "${C_YELLOW:-}Use this for paid themes like Nebula, Simple Visuals, or Champion —${C_RESET:-}"
-    echo -e "${C_YELLOW:-}these require a legitimate purchase; there's no public download for them.${C_RESET:-}"
+    echo -e "${C_YELLOW:-}Use this for paid themes like Nebula — these require a legitimate purchase.${C_RESET:-}"
     echo ""
 
-    if ! blueprint_installed; then
+    local bp_bin
+    bp_bin="$(_frosty_blueprint_cmd)"
+    if [[ -z "$bp_bin" ]]; then
         _frosty_fail "Blueprint isn't installed — install it first (option 1)"
         return 1
     fi
@@ -192,30 +187,21 @@ blueprint_install_from_file() {
 
     local bp_path=""
     case "$transfer_choice" in
-        1)
-            read -rp "  Full path to the .blueprint file on this server: " bp_path
-            ;;
+        1) read -rp "  Full path to the .blueprint file on this server: " bp_path ;;
         2)
             bp_path="$(blueprint_receive_upload)"
-            if [[ -z "$bp_path" ]]; then
-                _frosty_fail "No file was received"
-                return 1
-            fi
+            [[ -z "$bp_path" ]] && { _frosty_fail "No file was received"; return 1; }
             ;;
-        *)
-            _frosty_fail "Invalid choice"
-            return 1
-            ;;
+        *) _frosty_fail "Invalid choice"; return 1 ;;
     esac
 
     if [[ ! -f "$bp_path" ]]; then
         _frosty_fail "File not found: ${bp_path}"
-        _frosty_warn "Upload the purchased .blueprint file to this server first (e.g. via scp), then re-run with its path"
         return 1
     fi
 
     local panel_dir="${FROSTY_PANEL_DIR:-/var/www/pterodactyl}"
-    ( cd "$panel_dir" && timeout 120 blueprint -install "$bp_path" 2>&1 | tee /tmp/frosty_blueprint_install_file.log )
+    ( cd "$panel_dir" && timeout 120 "$bp_bin" -install "$bp_path" 2>&1 | tee /tmp/frosty_blueprint_install_file.log )
     local rc=${PIPESTATUS[0]}
 
     if [[ $rc -eq 0 ]]; then
@@ -226,10 +212,6 @@ blueprint_install_from_file() {
     fi
 }
 
-# Spins up a temporary, single-use web page the client can open in their
-# browser to drag-and-drop the purchased file straight onto this server —
-# no SCP, no SSH client, no command line needed on their end at all.
-# Prints the received file's path to stdout so callers can capture it.
 blueprint_receive_upload() {
     local upload_dir="/tmp/frosty_uploads"
     mkdir -p "$upload_dir"
@@ -266,8 +248,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(PAGE.encode())
 
     def do_POST(self):
-        # Manual multipart/form-data parsing — avoids the 'cgi' module,
-        # which is deprecated and removed entirely in Python 3.13+.
         content_type = self.headers.get("Content-Type", "")
         m = re.search(r"boundary=(.+)", content_type)
         if not m:
@@ -323,15 +303,11 @@ PYEOF
     echo "" >&2
     echo -e "    ${C_YELLOW:-}Open this link in a browser and upload the file:${C_RESET:-}" >&2
     echo -e "    ${C_CYAN:-}http://${pubip}:${port}${C_RESET:-}" >&2
-    echo -e "    ${C_YELLOW:-}(If that doesn't load, this port may need to be reachable —${C_RESET:-}" >&2
-    echo -e "    ${C_YELLOW:-} same networking rules as everything else on this server.)${C_RESET:-}" >&2
     echo -n "    Waiting for upload (up to 5 minutes)" >&2
 
     local waited=0
     while [[ ${waited} -lt 300 ]]; do
-        if [[ -f "${upload_dir}/.received" ]]; then
-            break
-        fi
+        [[ -f "${upload_dir}/.received" ]] && break
         echo -n "." >&2
         sleep 2
         waited=$((waited + 2))
@@ -354,17 +330,19 @@ PYEOF
 
 blueprint_remove_extension() {
     echo ""
-    if ! blueprint_installed; then
+    local bp_bin
+    bp_bin="$(_frosty_blueprint_cmd)"
+    if [[ -z "$bp_bin" ]]; then
         _frosty_fail "Blueprint isn't installed"
         return 1
     fi
-    blueprint -list 2>&1
+    "$bp_bin" -list 2>&1
     echo ""
     read -rp "  Extension identifier to remove: " ext_id
     [[ -z "$ext_id" ]] && { _frosty_fail "Identifier required"; return 1; }
 
     local panel_dir="${FROSTY_PANEL_DIR:-/var/www/pterodactyl}"
-    ( cd "$panel_dir" && blueprint -remove "$ext_id" 2>&1 | tee /tmp/frosty_blueprint_remove.log )
+    ( cd "$panel_dir" && "$bp_bin" -remove "$ext_id" 2>&1 | tee /tmp/frosty_blueprint_remove.log )
     if [[ ${PIPESTATUS[0]} -eq 0 ]]; then
         _frosty_ok "'${ext_id}' removed"
     else
@@ -404,13 +382,12 @@ show_themes_submenu() {
         2) blueprint_install_open_extension "recolor" ;;
         3)
             echo ""
-            echo -e "${C_YELLOW:-}Nebula is a paid theme (~\$12.49) sold on BuiltByBit — it has no public${C_RESET:-}"
-            echo -e "${C_YELLOW:-}download URL, so this can't be automated without a purchase.${C_RESET:-}"
+            echo -e "${C_YELLOW:-}Nebula is a paid theme sold on BuiltByBit — no public download exists.${C_RESET:-}"
             echo -e "${C_YELLOW:-}Buy it at: https://builtbybit.com/resources/nebula.32442/${C_RESET:-}"
-            echo -e "${C_YELLOW:-}then use option [5] here with the downloaded .blueprint file.${C_RESET:-}"
+            echo -e "${C_YELLOW:-}then use option [5] with the downloaded .blueprint file.${C_RESET:-}"
             ;;
         4)
-            read -rp "  Extension/theme identifier (as used by 'blueprint -install <name>'): " custom_ext
+            read -rp "  Extension/theme identifier: " custom_ext
             [[ -n "$custom_ext" ]] && blueprint_install_open_extension "$custom_ext"
             ;;
         5) blueprint_install_from_file ;;
