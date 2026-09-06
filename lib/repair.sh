@@ -188,15 +188,46 @@ repair_all_services() {
         fi
     fi
 
-    # Panel health check — catches a broken PHP boot (bad service provider,
-    # missing extension files, etc.) that nginx/php-fpm being "up" won't
+    # Panel health check + auto-heal — catches a broken PHP boot (bad
+    # service provider, missing extension, mismatched vendor/ deps after
+    # a theme/extension install) that nginx/php-fpm being "up" won't
     # reveal on their own, since they'll happily return a 500 all day.
     local panel_dir="${FROSTY_PANEL_DIR:-/var/www/pterodactyl}"
     if [[ -f "${panel_dir}/artisan" ]]; then
         local artisan_check
         artisan_check="$(cd "$panel_dir" && "php${FROSTY_PHP_VERSION:-8.3}" artisan --version 2>&1)"
+
         if echo "$artisan_check" | grep -q "^Laravel Framework"; then
             _frosty_ok "Panel application boots cleanly ($artisan_check)"
+        elif echo "$artisan_check" | grep -qi "extension\|composer.json requires"; then
+            # Most common cause: something ran composer under a DIFFERENT
+            # php binary on this host (this environment has multiple PHP
+            # installs, e.g. a devcontainer-provided php 8.4 alongside the
+            # apt-installed php8.3 Frosty actually configured), leaving
+            # vendor/ built against the wrong PHP's extension set. Re-run
+            # composer explicitly under php8.3 to fix it — same fix
+            # applied by hand earlier in this project's development.
+            _frosty_warn "Panel fails to boot — looks like a missing-PHP-extension/composer mismatch, attempting auto-fix"
+            "php${FROSTY_PHP_VERSION:-8.3}" artisan down >/dev/null 2>&1
+            ( cd "$panel_dir" && COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_MEMORY_LIMIT=-1 timeout 600 \
+                "php${FROSTY_PHP_VERSION:-8.3}" /usr/local/bin/composer install \
+                --no-dev --optimize-autoloader --no-interaction \
+                >/tmp/frosty_repair_composer.log 2>&1 )
+
+            if [[ $? -eq 0 ]]; then
+                ( cd "$panel_dir" && "php${FROSTY_PHP_VERSION:-8.3}" artisan config:clear >/dev/null 2>&1 )
+                ( cd "$panel_dir" && "php${FROSTY_PHP_VERSION:-8.3}" artisan cache:clear >/dev/null 2>&1 )
+                artisan_check="$(cd "$panel_dir" && "php${FROSTY_PHP_VERSION:-8.3}" artisan --version 2>&1)"
+                if echo "$artisan_check" | grep -q "^Laravel Framework"; then
+                    "php${FROSTY_PHP_VERSION:-8.3}" artisan up >/dev/null 2>&1
+                    _frosty_ok "Auto-fix worked — panel boots cleanly now ($artisan_check)"
+                else
+                    _frosty_fail "composer install succeeded but panel still fails to boot — see below, panel left in maintenance mode"
+                    echo "$artisan_check" | head -10 | sed 's/^/    /'
+                fi
+            else
+                _frosty_fail "Auto-fix composer install failed — see /tmp/frosty_repair_composer.log, panel left in maintenance mode"
+            fi
         else
             _frosty_fail "Panel application fails to boot — a broken service provider or missing file is likely"
             echo "$artisan_check" | head -10 | sed 's/^/    /'
