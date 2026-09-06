@@ -32,9 +32,6 @@ install_docker() {
         if docker info >/dev/null 2>&1; then
             _frosty_ok "dockerd already running"
         else
-            # Clear stale PID file / kill any bare dockerd from a previous
-            # run so pm2 owns the only instance bound to the socket —
-            # same reasoning as MariaDB/Redis's pm2 migration.
             if [[ -f /var/run/docker.pid ]]; then
                 local stale_pid
                 stale_pid="$(cat /var/run/docker.pid 2>/dev/null)"
@@ -54,8 +51,6 @@ install_docker() {
                 _frosty_fail "pm2 setup failed — cannot start dockerd persistently"
                 return 1
             fi
-            # dockerd runs in the foreground by default (no daemon flag),
-            # which is exactly what pm2 needs to supervise it.
             if ! _frosty_pm2_start "dockerd" "/" "/usr/bin/dockerd"; then
                 echo "    pm2 logs:"
                 pm2 logs dockerd --lines 20 --nostream 2>/dev/null
@@ -65,10 +60,6 @@ install_docker() {
         fi
     fi
 
-    # dockerd's first-time init (creating bridge networks, iptables
-    # chains, etc.) can take longer than a plain restart — same lesson
-    # learned from MariaDB's InnoDB init needing more headroom than a
-    # short fixed wait allowed for.
     local docker_ready=0
     for i in $(seq 1 15); do
         if docker info >/dev/null 2>&1; then
