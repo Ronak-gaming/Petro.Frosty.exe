@@ -220,6 +220,13 @@ install_nook_theme() {
     "php${FROSTY_PHP_VERSION:-8.3}" artisan up >/dev/null 2>&1
 
     _frosty_ok "NookTheme installed and panel is back up"
+    echo ""
+    echo -e "${C_CYAN:-}    ─────────────────────────────────────${C_RESET:-}"
+    echo -e "${C_WHITE:-}    Theme:${C_RESET:-} NookTheme"
+    echo -e "${C_WHITE:-}    Theme created by:${C_RESET:-} Nookure (github.com/Nookure/NookTheme)"
+    echo -e "${C_WHITE:-}    Install script by:${C_RESET:-} Jishnu"
+    echo -e "${C_YELLOW:-}    Special thanks to both for making this available.${C_RESET:-}"
+    echo -e "${C_CYAN:-}    ─────────────────────────────────────${C_RESET:-}"
     return 0
 }
 
