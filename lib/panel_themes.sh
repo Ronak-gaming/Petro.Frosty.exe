@@ -4,12 +4,6 @@ set -uo pipefail
 FROSTY_BLUEPRINT_RC="${FROSTY_PANEL_DIR:-/var/www/pterodactyl}/.blueprintrc"
 FROSTY_BLUEPRINT_BIN="/usr/local/bin/blueprint"
 
-# Resolves a working blueprint command — prefers the fixed install
-# location directly instead of relying on PATH/`command -v`, since PATH
-# has proven inconsistent in this environment (a file can exist on disk
-# at the known path while `which`/`command -v` still fail to find it).
-# Also force-fixes the exec bit, since blueprint.sh has been observed to
-# create this file without it set.
 _frosty_blueprint_cmd() {
     if [[ -f "$FROSTY_BLUEPRINT_BIN" ]]; then
         chmod +x "$FROSTY_BLUEPRINT_BIN" 2>/dev/null
@@ -89,11 +83,7 @@ install_blueprint() {
 
     if ! unzip -t "${panel_dir}/release.zip" >/tmp/frosty_blueprint_verify.log 2>&1; then
         _frosty_fail "Downloaded file isn't a valid zip — see /tmp/frosty_blueprint_verify.log"
-        echo "    -- what we actually got (first 300 bytes) --"
-        head -c 300 "${panel_dir}/release.zip" | sed 's/^/    /'
-        echo ""
         file "${panel_dir}/release.zip" 2>/dev/null | sed 's/^/    /'
-        _frosty_warn "Kept at ${panel_dir}/release.zip for inspection"
         return 1
     fi
 
@@ -126,229 +116,111 @@ BPRC
         return 0
     else
         _frosty_fail "Blueprint install did not complete — check /tmp/frosty_blueprint_setup.log"
-        echo "    -- searching for a blueprint binary --"
-        find "$panel_dir" /usr/local/bin -maxdepth 2 -iname "blueprint*" 2>/dev/null | sed 's/^/    /'
         return 1
     fi
 }
 
-blueprint_list_installed() {
+# Fully removes Blueprint: its CLI, its data directory, its config file,
+# and — critically — the hooks it wrote into AppServiceProvider.php,
+# which is what actually breaks the panel if left dangling after a
+# partial or corrupted Blueprint state (references to files that no
+# longer exist cause a hard 500 on every request).
+uninstall_blueprint() {
     echo ""
-    echo -e "${C_CYAN:-}== Installed Extensions/Themes ==${C_RESET:-}"
-    local bp_bin
-    bp_bin="$(_frosty_blueprint_cmd)"
-    if [[ -z "$bp_bin" ]]; then
-        _frosty_warn "Blueprint isn't installed yet"
-        return 1
-    fi
-    "$bp_bin" -list 2>&1
-}
-
-blueprint_install_open_extension() {
-    local key="$1"
+    echo -e "${C_CYAN:-}== Uninstalling Blueprint Framework ==${C_RESET:-}"
     local panel_dir="${FROSTY_PANEL_DIR:-/var/www/pterodactyl}"
-    local bp_bin
-    bp_bin="$(_frosty_blueprint_cmd)"
-    if [[ -z "$bp_bin" ]]; then
-        _frosty_fail "Blueprint isn't installed — install it first (option 1)"
-        return 1
+
+    if [[ -f "${panel_dir}/app/Providers/AppServiceProvider.php" ]]; then
+        cp "${panel_dir}/app/Providers/AppServiceProvider.php" "/tmp/AppServiceProvider.php.bak"
+        sed -i '/Blueprint/d' "${panel_dir}/app/Providers/AppServiceProvider.php"
+        _frosty_ok "Removed Blueprint hooks from AppServiceProvider.php (backup: /tmp/AppServiceProvider.php.bak)"
     fi
 
-    echo ""
-    echo -e "${C_CYAN:-}== Installing extension: ${key} ==${C_RESET:-}"
-    ( cd "$panel_dir" && timeout 120 "$bp_bin" -install "$key" 2>&1 | tee "/tmp/frosty_blueprint_install_${key}.log" )
-    local rc=${PIPESTATUS[0]}
+    rm -rf "${panel_dir}/app/Providers/Blueprint"
+    rm -rf "${panel_dir}/.blueprint"
+    rm -f "${panel_dir}/.blueprintrc"
+    rm -f "$FROSTY_BLUEPRINT_BIN"
+    _frosty_ok "Removed Blueprint files and data directory"
 
-    if [[ $rc -eq 0 ]]; then
-        _frosty_ok "'${key}' installed"
+    echo "    Rebuilding autoloader and clearing caches..."
+    ( cd "$panel_dir" && composer dump-autoload >/tmp/frosty_blueprint_uninstall.log 2>&1 )
+    ( cd "$panel_dir" && "php${FROSTY_PHP_VERSION:-8.3}" artisan config:clear >>/tmp/frosty_blueprint_uninstall.log 2>&1 )
+    ( cd "$panel_dir" && "php${FROSTY_PHP_VERSION:-8.3}" artisan cache:clear >>/tmp/frosty_blueprint_uninstall.log 2>&1 )
+
+    local version_check
+    version_check="$(cd "$panel_dir" && "php${FROSTY_PHP_VERSION:-8.3}" artisan --version 2>&1)"
+    if echo "$version_check" | grep -q "^Laravel Framework"; then
+        _frosty_ok "Panel boots cleanly: $version_check"
     else
-        _frosty_fail "'${key}' install failed — see /tmp/frosty_blueprint_install_${key}.log"
-        return 1
+        _frosty_fail "Panel still fails to boot after removal — see /tmp/frosty_blueprint_uninstall.log"
+        echo "$version_check" | head -10 | sed 's/^/    /'
     fi
 }
 
-blueprint_install_from_file() {
+# Installs NookTheme (free, open-source: github.com/Nookure/NookTheme)
+# directly from its official release. Hardened version of a community
+# install script: adds timeouts (the exact hang risk this project has
+# hit repeatedly), checks each step before continuing, and guarantees
+# the panel goes back "up" even on failure — the original always ran
+# `php artisan up` unconditionally, which would expose a half-broken
+# panel to real users if a step failed silently.
+install_nook_theme() {
     echo ""
-    echo -e "${C_CYAN:-}== Install Purchased Theme/Extension (.blueprint file) ==${C_RESET:-}"
-    echo -e "${C_YELLOW:-}Use this for paid themes like Nebula — these require a legitimate purchase.${C_RESET:-}"
-    echo ""
-
-    local bp_bin
-    bp_bin="$(_frosty_blueprint_cmd)"
-    if [[ -z "$bp_bin" ]]; then
-        _frosty_fail "Blueprint isn't installed — install it first (option 1)"
-        return 1
-    fi
-
-    echo "  How do you want to get the file onto this server?"
-    echo "  [1] It's already here — I'll give you the path"
-    echo "  [2] Upload it via browser (no SCP needed)"
-    read -rp "  Choice [1-2]: " transfer_choice
-
-    local bp_path=""
-    case "$transfer_choice" in
-        1) read -rp "  Full path to the .blueprint file on this server: " bp_path ;;
-        2)
-            bp_path="$(blueprint_receive_upload)"
-            [[ -z "$bp_path" ]] && { _frosty_fail "No file was received"; return 1; }
-            ;;
-        *) _frosty_fail "Invalid choice"; return 1 ;;
-    esac
-
-    if [[ ! -f "$bp_path" ]]; then
-        _frosty_fail "File not found: ${bp_path}"
-        return 1
-    fi
-
+    echo -e "${C_CYAN:-}== Installing NookTheme ==${C_RESET:-}"
     local panel_dir="${FROSTY_PANEL_DIR:-/var/www/pterodactyl}"
-    ( cd "$panel_dir" && timeout 120 "$bp_bin" -install "$bp_path" 2>&1 | tee /tmp/frosty_blueprint_install_file.log )
-    local rc=${PIPESTATUS[0]}
 
-    if [[ $rc -eq 0 ]]; then
-        _frosty_ok "Installed from ${bp_path}"
-    else
-        _frosty_fail "Install failed — see /tmp/frosty_blueprint_install_file.log"
+    if [[ ! -f "${panel_dir}/artisan" ]]; then
+        _frosty_fail "Panel not found at ${panel_dir} — install the Panel first"
         return 1
     fi
-}
 
-blueprint_receive_upload() {
-    local upload_dir="/tmp/frosty_uploads"
-    mkdir -p "$upload_dir"
-    rm -f "${upload_dir}"/*.blueprint 2>/dev/null
+    cd "$panel_dir" || return 1
+    "php${FROSTY_PHP_VERSION:-8.3}" artisan down >/dev/null 2>&1
 
-    local port=8899
-    while ss -ltn 2>/dev/null | grep -q ":${port} "; do
-        port=$((port + 1))
-    done
-
-    local pubip="${FROSTY_PUBLIC_IP:-$(curl -s --max-time 5 ifconfig.me 2>/dev/null)}"
-
-    cat > /tmp/frosty_upload_server.py << 'PYEOF'
-import http.server, sys, os, re
-
-UPLOAD_DIR = sys.argv[2] if len(sys.argv) > 2 else "/tmp/frosty_uploads"
-
-PAGE = """<!DOCTYPE html><html><head><title>Frosty.exe - File Upload</title>
-<style>body{font-family:sans-serif;background:#0b1220;color:#eee;display:flex;
-align-items:center;justify-content:center;height:100vh;margin:0}
-.box{background:#151f30;padding:2rem 3rem;border-radius:12px;text-align:center}
-input[type=file]{margin:1rem 0}button{background:#38bdf8;border:none;padding:0.6rem 1.4rem;
-border-radius:6px;font-weight:bold;cursor:pointer}</style></head>
-<body><div class="box"><h2>Upload .blueprint file</h2>
-<form method="POST" enctype="multipart/form-data">
-<input type="file" name="file" accept=".blueprint,.zip"><br>
-<button type="submit">Upload</button></form></div></body></html>"""
-
-class Handler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html")
-        self.end_headers()
-        self.wfile.write(PAGE.encode())
-
-    def do_POST(self):
-        content_type = self.headers.get("Content-Type", "")
-        m = re.search(r"boundary=(.+)", content_type)
-        if not m:
-            self.send_response(400)
-            self.end_headers()
-            return
-        boundary = m.group(1).strip('"').encode()
-        length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(length)
-
-        parts = body.split(b"--" + boundary)
-        filename = None
-        filedata = None
-        for part in parts:
-            if b'name="file"' not in part:
-                continue
-            fm = re.search(rb'filename="([^"]+)"', part)
-            if not fm:
-                continue
-            filename = fm.group(1).decode(errors="replace")
-            idx = part.find(b"\r\n\r\n")
-            if idx == -1:
-                continue
-            filedata = part[idx + 4:]
-            if filedata.endswith(b"\r\n"):
-                filedata = filedata[:-2]
-            break
-
-        if filename and filedata is not None:
-            fname = os.path.basename(filename)
-            dest = os.path.join(UPLOAD_DIR, fname)
-            with open(dest, "wb") as f:
-                f.write(filedata)
-            with open(os.path.join(UPLOAD_DIR, ".received"), "w") as f:
-                f.write(dest)
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html")
-            self.end_headers()
-            self.wfile.write(b"<h2>Uploaded. You can close this tab.</h2>")
-        else:
-            self.send_response(400)
-            self.end_headers()
-
-    def log_message(self, *a):
-        pass
-
-http.server.HTTPServer(("0.0.0.0", int(sys.argv[1])), Handler).serve_forever()
-PYEOF
-
-    python3 /tmp/frosty_upload_server.py "$port" "$upload_dir" >/tmp/frosty_upload_server.log 2>&1 &
-    local server_pid=$!
-
-    echo "" >&2
-    echo -e "    ${C_YELLOW:-}Open this link in a browser and upload the file:${C_RESET:-}" >&2
-    echo -e "    ${C_CYAN:-}http://${pubip}:${port}${C_RESET:-}" >&2
-    echo -n "    Waiting for upload (up to 5 minutes)" >&2
-
-    local waited=0
-    while [[ ${waited} -lt 300 ]]; do
-        [[ -f "${upload_dir}/.received" ]] && break
-        echo -n "." >&2
-        sleep 2
-        waited=$((waited + 2))
-    done
-    echo "" >&2
-
-    kill "$server_pid" 2>/dev/null
-
-    if [[ -f "${upload_dir}/.received" ]]; then
-        local received_path
-        received_path="$(cat "${upload_dir}/.received")"
-        rm -f "${upload_dir}/.received"
-        echo -e "    ${C_GREEN:-}Received: ${received_path}${C_RESET:-}" >&2
-        echo "$received_path"
-    else
-        echo -e "    ${C_RED:-}No upload received within 5 minutes.${C_RESET:-}" >&2
-        echo ""
-    fi
-}
-
-blueprint_remove_extension() {
-    echo ""
-    local bp_bin
-    bp_bin="$(_frosty_blueprint_cmd)"
-    if [[ -z "$bp_bin" ]]; then
-        _frosty_fail "Blueprint isn't installed"
+    echo "    Downloading NookTheme..."
+    rm -f /tmp/frosty_nooktheme.tar.gz
+    if ! timeout 120 curl -fL -o /tmp/frosty_nooktheme.tar.gz \
+        "https://github.com/Nookure/NookTheme/releases/latest/download/panel.tar.gz" \
+        >/tmp/frosty_nooktheme_download.log 2>&1; then
+        _frosty_fail "Download failed or timed out — see /tmp/frosty_nooktheme_download.log"
+        "php${FROSTY_PHP_VERSION:-8.3}" artisan up >/dev/null 2>&1
         return 1
     fi
-    "$bp_bin" -list 2>&1
-    echo ""
-    read -rp "  Extension identifier to remove: " ext_id
-    [[ -z "$ext_id" ]] && { _frosty_fail "Identifier required"; return 1; }
 
-    local panel_dir="${FROSTY_PANEL_DIR:-/var/www/pterodactyl}"
-    ( cd "$panel_dir" && "$bp_bin" -remove "$ext_id" 2>&1 | tee /tmp/frosty_blueprint_remove.log )
-    if [[ ${PIPESTATUS[0]} -eq 0 ]]; then
-        _frosty_ok "'${ext_id}' removed"
-    else
-        _frosty_fail "Remove failed — see /tmp/frosty_blueprint_remove.log"
+    echo "    Extracting over the panel..."
+    if ! tar -xzf /tmp/frosty_nooktheme.tar.gz -C "$panel_dir" >/tmp/frosty_nooktheme_extract.log 2>&1; then
+        _frosty_fail "Extraction failed — see /tmp/frosty_nooktheme_extract.log"
+        "php${FROSTY_PHP_VERSION:-8.3}" artisan up >/dev/null 2>&1
         return 1
     fi
+    rm -f /tmp/frosty_nooktheme.tar.gz
+    chmod -R 755 storage bootstrap/cache 2>/dev/null
+
+    echo "    Running composer install (this can take a few minutes)..."
+    if ! COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_MEMORY_LIMIT=-1 timeout 600 composer install \
+        --no-dev --optimize-autoloader --no-interaction \
+        >/tmp/frosty_nooktheme_composer.log 2>&1; then
+        _frosty_fail "composer install failed or timed out — see /tmp/frosty_nooktheme_composer.log"
+        _frosty_warn "Panel left in maintenance mode ('php artisan up' NOT run) — fix the composer error first, then run: php${FROSTY_PHP_VERSION:-8.3} artisan up"
+        return 1
+    fi
+
+    "php${FROSTY_PHP_VERSION:-8.3}" artisan view:clear >/dev/null 2>&1
+    "php${FROSTY_PHP_VERSION:-8.3}" artisan config:clear >/dev/null 2>&1
+
+    echo "    Running database migrations..."
+    if ! "php${FROSTY_PHP_VERSION:-8.3}" artisan migrate --seed --force >/tmp/frosty_nooktheme_migrate.log 2>&1; then
+        _frosty_fail "Migration failed — see /tmp/frosty_nooktheme_migrate.log"
+        _frosty_warn "Panel left in maintenance mode — review the migration error before bringing it back up"
+        return 1
+    fi
+
+    chown -R www-data:www-data "$panel_dir"
+    "php${FROSTY_PHP_VERSION:-8.3}" artisan queue:restart >/dev/null 2>&1
+    "php${FROSTY_PHP_VERSION:-8.3}" artisan up >/dev/null 2>&1
+
+    _frosty_ok "NookTheme installed and panel is back up"
+    return 0
 }
 
 show_themes_submenu() {
@@ -365,35 +237,19 @@ show_themes_submenu() {
     fi
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Install Blueprint Framework${C_RESET}              ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[2]${C_RESET} ${C_WHITE}Install Recolor (free theme)${C_RESET}             ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[3]${C_RESET} ${C_WHITE}Install Nebula (requires purchase)${C_RESET}       ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[4]${C_RESET} ${C_WHITE}Install Other (by name/catalog)${C_RESET}          ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[5]${C_RESET} ${C_WHITE}Install From Purchased .blueprint File${C_RESET}   ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_GREEN}[6]${C_RESET} ${C_WHITE}List Installed${C_RESET}                           ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_RED}[7]${C_RESET} ${C_WHITE}Remove Extension${C_RESET}                         ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[8]${C_RESET} ${C_WHITE}Back${C_RESET}                                     ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_RED}[2]${C_RESET} ${C_WHITE}Uninstall Blueprint Framework${C_RESET}            ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[3]${C_RESET} ${C_WHITE}Install NookTheme (free theme)${C_RESET}           ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[4]${C_RESET} ${C_WHITE}Back${C_RESET}                                     ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-8]: " theme_choice
+    read -rp "  Select an option [1-4]: " theme_choice
 
     case "$theme_choice" in
         1) install_blueprint ;;
-        2) blueprint_install_open_extension "recolor" ;;
-        3)
-            echo ""
-            echo -e "${C_YELLOW:-}Nebula is a paid theme sold on BuiltByBit — no public download exists.${C_RESET:-}"
-            echo -e "${C_YELLOW:-}Buy it at: https://builtbybit.com/resources/nebula.32442/${C_RESET:-}"
-            echo -e "${C_YELLOW:-}then use option [5] with the downloaded .blueprint file.${C_RESET:-}"
-            ;;
-        4)
-            read -rp "  Extension/theme identifier: " custom_ext
-            [[ -n "$custom_ext" ]] && blueprint_install_open_extension "$custom_ext"
-            ;;
-        5) blueprint_install_from_file ;;
-        6) blueprint_list_installed ;;
-        7) blueprint_remove_extension ;;
-        8) return 0 ;;
+        2) uninstall_blueprint ;;
+        3) install_nook_theme ;;
+        4) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 
