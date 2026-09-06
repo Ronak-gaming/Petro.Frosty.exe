@@ -67,8 +67,13 @@ install_database() {
         sleep 2
     fi
 
+    # First-time InnoDB initialization can trigger 2-3 automatic pm2
+    # restarts before MariaDB actually stabilizes and binds its socket
+    # (confirmed from real logs: 3 restarts, each taking a few seconds).
+    # 10 seconds total wasn't enough headroom for that and caused false
+    # "failed" reports on installs that were actually fine — 40s is.
     local mysql_ready=0
-    for i in 1 2 3 4 5; do
+    for i in $(seq 1 20); do
         if mysqladmin ping >/dev/null 2>&1; then
             mysql_ready=1
             break
@@ -141,9 +146,6 @@ install_redis() {
             _frosty_fail "pm2 setup failed — cannot start Redis persistently"
             return 1
         fi
-        # Explicitly pass --daemonize no so redis-server stays in the
-        # foreground — its default without any flag is already
-        # foreground, but this makes the intent unambiguous for pm2.
         if ! _frosty_pm2_start "redis" "/" "redis-server" "--daemonize" "no"; then
             echo "    pm2 logs:"
             pm2 logs redis --lines 20 --nostream 2>/dev/null
@@ -153,7 +155,7 @@ install_redis() {
     fi
 
     local redis_ready=0
-    for i in 1 2 3; do
+    for i in 1 2 3 4 5 6 7 8; do
         if redis-cli ping 2>/dev/null | grep -q "PONG"; then
             redis_ready=1
             break
