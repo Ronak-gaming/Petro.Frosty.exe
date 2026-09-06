@@ -197,7 +197,7 @@ install_nook_theme() {
     chmod -R 755 storage bootstrap/cache 2>/dev/null
 
     echo "    Running composer install (this can take a few minutes)..."
-    if ! COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_MEMORY_LIMIT=-1 timeout 600 composer install \
+    if ! COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_MEMORY_LIMIT=-1 timeout 600 "php${FROSTY_PHP_VERSION:-8.3}" /usr/local/bin/composer install \
         --no-dev --optimize-autoloader --no-interaction \
         >/tmp/frosty_nooktheme_composer.log 2>&1; then
         _frosty_fail "composer install failed or timed out — see /tmp/frosty_nooktheme_composer.log"
