@@ -188,6 +188,23 @@ repair_all_services() {
         fi
     fi
 
+    # Panel health check — catches a broken PHP boot (bad service provider,
+    # missing extension files, etc.) that nginx/php-fpm being "up" won't
+    # reveal on their own, since they'll happily return a 500 all day.
+    local panel_dir="${FROSTY_PANEL_DIR:-/var/www/pterodactyl}"
+    if [[ -f "${panel_dir}/artisan" ]]; then
+        local artisan_check
+        artisan_check="$(cd "$panel_dir" && "php${FROSTY_PHP_VERSION:-8.3}" artisan --version 2>&1)"
+        if echo "$artisan_check" | grep -q "^Laravel Framework"; then
+            _frosty_ok "Panel application boots cleanly ($artisan_check)"
+        else
+            _frosty_fail "Panel application fails to boot — a broken service provider or missing file is likely"
+            echo "$artisan_check" | head -10 | sed 's/^/    /'
+            _frosty_warn "Common cause: a partially-installed Blueprint extension registered in app/Providers/AppServiceProvider.php"
+            _frosty_warn "Check: grep -n Blueprint ${panel_dir}/app/Providers/AppServiceProvider.php"
+        fi
+    fi
+
     echo ""
     echo -e "${C_CYAN:-}Repair complete.${C_RESET:-}"
     return 0
