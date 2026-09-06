@@ -95,7 +95,7 @@ check_environment() {
     echo "== Checking environment =="
 
     if [[ ! -d /run/systemd/system ]]; then
-        _frosty_warn "systemd not detected as PID 1 controller — service management may not work"
+        _frosty_warn "systemd not detected as PID 1 controller — services will be supervised by pm2 instead"
     else
         _frosty_ok "systemd detected"
     fi
