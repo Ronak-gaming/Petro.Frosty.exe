@@ -56,8 +56,13 @@ install_vps_stack() {
         dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p")
     done
 
- if [[ ${#missing[@]} -gt 0 ]]; then
+    if [[ ${#missing[@]} -gt 0 ]]; then
         echo "    Installing: ${missing[*]}"
+        # A dpkg left interrupted by an earlier kill/restart (very common
+        # in this project's non-systemd environment) blocks EVERY apt
+        # operation with "dpkg was interrupted" until repaired — fix it
+        # first instead of letting the whole VPS stack install fail on it.
+        dpkg --configure -a >/tmp/frosty_vps_dpkg_fix.log 2>&1
         apt-get clean >/dev/null 2>&1
         rm -rf /var/cache/apt/archives/partial/* 2>/dev/null
         DEBIAN_FRONTEND=noninteractive apt-get update -y >/tmp/frosty_vps_apt.log 2>&1
