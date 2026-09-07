@@ -62,7 +62,25 @@ install_vps_stack() {
     if [[ "$kvm_usable" -eq 1 ]]; then
         _frosty_ok "/dev/kvm present and usable — VMs will use hardware acceleration"
     else
-        _frosty_warn "/dev/kvm not usable here — VMs will run in software emulation (slower, but functional)"
+        _frosty_warn "/dev/kvm not usable on this host — real VMs here would run in slow software emulation (TCG)"
+        echo ""
+        echo "  No hardware virtualization available. Choose how to proceed:"
+        echo "  [1] Continue anyway with software emulation (TCG) — slower, but a real isolated VM"
+        echo "  [2] Switch to Docker VPS instead — near-native speed, but shares the host kernel (less isolated)"
+        read -rp "  Choice [1-2]: " kvm_fallback_choice
+
+        if [[ "$kvm_fallback_choice" == "2" ]]; then
+            echo ""
+            echo "    Switching to Docker VPS..."
+            load_module "vps_docker.sh"
+            if install_vps_docker_stack; then
+                vps_docker_create
+                return 2
+            else
+                _frosty_warn "Docker isn't available/working on this host either"
+                _frosty_warn "Falling back to software-emulated (TCG) KVM VPS instead — it's slower, but it will work"
+            fi
+        fi
     fi
 
     local pkgs=(qemu-system-x86 qemu-utils genisoimage)
@@ -174,14 +192,19 @@ show_vps_kvm_menu() {
 
     case "$gate_choice" in
         1)
-            if ! install_vps_stack; then
+            install_vps_stack
+            local stack_rc=$?
+            if [[ $stack_rc -eq 1 ]]; then
                 echo ""
                 echo -e "${C_YELLOW}QEMU setup failed on this host.${C_RESET}"
                 echo ""
                 read -rp "  Press Enter to continue..." _
                 return 1
+            elif [[ $stack_rc -eq 2 ]]; then
+                : # Already handled — Docker VPS was created instead
+            else
+                vps_create
             fi
-            vps_create
             ;;
         2) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
@@ -410,9 +433,15 @@ METAEOF
         fi
     fi
 
+    local display_ip="${FROSTY_PUBLIC_IP:-}"
+    if [[ -z "$display_ip" ]]; then
+        display_ip="$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null)"
+    fi
+    [[ -z "$display_ip" ]] && display_ip="127.0.0.1"
+
     echo ""
     echo -e "    ${C_CYAN:-}Connect with:${C_RESET:-}"
-    echo "      ssh -i ${FROSTY_VPS_DIR}/frosty_vps_key -p ${ssh_port} root@<this-server-ip>"
+    echo "      ssh -i ${FROSTY_VPS_DIR}/frosty_vps_key -p ${ssh_port} root@${display_ip}"
     echo ""
     echo "  Share this VM now? [1] tmate  [2] sshx  [3] Live Terminal (local)  [4] Skip"
     read -rp "  Choice [1-4]: " share_now
