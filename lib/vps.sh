@@ -1,13 +1,30 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
+# ============================================================
+# KVM VPS — rewritten to use QEMU directly instead of libvirt.
+#
+# Why: libvirt's "default" network needs a bridge (virbr0) + dnsmasq
+# for DHCP + iptables NAT — a stack that repeatedly failed to hand out
+# IPs in sandboxed/nested-virt hosts (Codespaces, some containers).
+#
+# This version uses QEMU's built-in user-mode networking (SLIRP) with
+# hostfwd port mapping instead — a pure userspace network stack that
+# needs NO host bridge, DHCP server, or NAT rules. Every VM is reached
+# via localhost:<its assigned SSH port>, guaranteed to work anywhere
+# QEMU itself runs. KVM acceleration is auto-detected per VM: if
+# /dev/kvm is usable, VMs run at near-native speed (-enable-kvm -cpu
+# host); if not, they fall back to plain software emulation (TCG) —
+# slower, but still fully functional — instead of failing outright.
+# ============================================================
+
 FROSTY_VPS_DIR="/var/lib/frosty-vps"
 FROSTY_VPS_IMG_DIR="${FROSTY_VPS_DIR}/images"
 FROSTY_VPS_SNAP_DIR="${FROSTY_VPS_DIR}/snapshots"
 
 _frosty_vps_check_stack() {
-    if ! command -v virsh >/dev/null 2>&1; then
-        _frosty_warn "KVM/libvirt not installed yet — run Create VPS first"
+    if ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
+        _frosty_warn "QEMU not installed yet — run Create VPS first"
         return 1
     fi
     return 0
@@ -19,38 +36,36 @@ _frosty_vps_fix_kvm_perms() {
     fi
 }
 
-_frosty_vps_ensure_libvirt_running() {
+# Returns "1" if /dev/kvm exists AND is actually usable (readable +
+# writable) right now, "0" otherwise. Checked fresh per VM start,
+# since availability can change between attempts in some sandboxes.
+_frosty_vps_kvm_usable() {
     _frosty_vps_fix_kvm_perms
-    if virsh list >/dev/null 2>&1; then
-        return 0
+    if [[ -e /dev/kvm && -r /dev/kvm && -w /dev/kvm ]]; then
+        echo 1
+    else
+        echo 0
     fi
-    pkill -f virtlogd >/dev/null 2>&1
-    rm -f /run/libvirt/virtlogd-sock
-    mkdir -p /run/libvirt
-    virtlogd -d >/tmp/frosty_virtlogd.log 2>&1 &
-    sleep 2
-    service libvirtd start >/dev/null 2>&1 || (libvirtd -d >/tmp/frosty_libvirtd.log 2>&1 &)
-    sleep 2
-    _frosty_vps_fix_kvm_perms
-    if virsh list >/dev/null 2>&1; then
-        return 0
-    fi
-    return 1
 }
 
 install_vps_stack() {
     echo ""
-    echo "== Installing KVM/Libvirt Stack =="
+    echo "== Installing QEMU VPS Stack =="
 
-    if [[ ! -e /dev/kvm ]]; then
-        _frosty_fail "/dev/kvm not found — nested virtualization not available here"
-        return 1
+    # A dpkg left interrupted by an earlier kill/restart (common in this
+    # project's non-systemd environment) blocks EVERY apt operation
+    # until repaired — fix it first rather than letting installs fail.
+    dpkg --configure -a >/tmp/frosty_vps_dpkg_fix.log 2>&1
+
+    local kvm_usable
+    kvm_usable="$(_frosty_vps_kvm_usable)"
+    if [[ "$kvm_usable" -eq 1 ]]; then
+        _frosty_ok "/dev/kvm present and usable — VMs will use hardware acceleration"
+    else
+        _frosty_warn "/dev/kvm not usable here — VMs will run in software emulation (slower, but functional)"
     fi
-    _frosty_ok "/dev/kvm present"
 
-    _frosty_vps_fix_kvm_perms
-
-    local pkgs=(qemu-kvm libvirt-daemon-system libvirt-clients virtinst cloud-image-utils genisoimage bridge-utils iptables)
+    local pkgs=(qemu-system-x86 qemu-utils genisoimage)
     local missing=()
     for p in "${pkgs[@]}"; do
         dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p")
@@ -58,33 +73,29 @@ install_vps_stack() {
 
     if [[ ${#missing[@]} -gt 0 ]]; then
         echo "    Installing: ${missing[*]}"
-        # A dpkg left interrupted by an earlier kill/restart (very common
-        # in this project's non-systemd environment) blocks EVERY apt
-        # operation with "dpkg was interrupted" until repaired — fix it
-        # first instead of letting the whole VPS stack install fail on it.
-        dpkg --configure -a >/tmp/frosty_vps_dpkg_fix.log 2>&1
         apt-get clean >/dev/null 2>&1
         rm -rf /var/cache/apt/archives/partial/* 2>/dev/null
         DEBIAN_FRONTEND=noninteractive apt-get update -y >/tmp/frosty_vps_apt.log 2>&1
 
         if DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}" >>/tmp/frosty_vps_apt.log 2>&1; then
-            _frosty_ok "Libvirt/QEMU stack installed"
+            _frosty_ok "QEMU stack installed"
         else
             _frosty_warn "First install attempt failed (often a transient /tmp issue) — retrying once..."
-            apt-get clean >/dev/null 2>&1
+            dpkg --configure -a >>/tmp/frosty_vps_apt.log 2>&1
             DEBIAN_FRONTEND=noninteractive apt-get install -f -y >>/tmp/frosty_vps_apt.log 2>&1
             if DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}" >>/tmp/frosty_vps_apt.log 2>&1; then
-                _frosty_ok "Libvirt/QEMU stack installed (on retry)"
+                _frosty_ok "QEMU stack installed (on retry)"
             else
                 _frosty_fail "Install failed after retry — see /tmp/frosty_vps_apt.log"
                 return 1
             fi
         fi
     else
-        _frosty_ok "Libvirt/QEMU stack already installed"
+        _frosty_ok "QEMU stack already installed"
     fi
 
-    # Ensure /dev/kvm permission fix survives future boots via udev rule
+    # Keep the /dev/kvm permission fix persistent via udev, same as
+    # before — harmless if KVM isn't present at all.
     if [[ ! -f /etc/udev/rules.d/99-frosty-kvm.rules ]]; then
         echo 'KERNEL=="kvm", MODE="0666"' > /etc/udev/rules.d/99-frosty-kvm.rules
         udevadm control --reload-rules >/dev/null 2>&1
@@ -92,30 +103,12 @@ install_vps_stack() {
     fi
     _frosty_vps_fix_kvm_perms
 
-    if [[ -d /run/systemd/system ]]; then
-        systemctl enable --now virtlogd >/dev/null 2>&1
-        systemctl enable --now libvirtd >/dev/null 2>&1
-    fi
-
-    if ! _frosty_vps_ensure_libvirt_running; then
-        _frosty_fail "libvirtd/virtlogd could not be started"
+    load_module "pm2.sh"
+    if ! _frosty_ensure_pm2; then
+        _frosty_fail "pm2 setup failed — VPS instances need pm2 to run persistently in this environment"
         return 1
     fi
-    _frosty_ok "libvirtd responding"
-
-    if ! virsh net-info default >/dev/null 2>&1; then
-        virsh net-define /usr/share/libvirt/networks/default.xml >/dev/null 2>&1
-    fi
-    if ! virsh net-list --name 2>/dev/null | grep -q "^default$"; then
-        virsh net-start default >/dev/null 2>&1
-    fi
-    virsh net-autostart default >/dev/null 2>&1
-    if virsh net-list --name 2>/dev/null | grep -q "^default$"; then
-        _frosty_ok "libvirt default network active"
-    else
-        _frosty_fail "Could not activate libvirt default network"
-        return 1
-    fi
+    _frosty_ok "pm2 ready for VM supervision"
 
     mkdir -p "$FROSTY_VPS_IMG_DIR" "$FROSTY_VPS_SNAP_DIR"
 
@@ -140,12 +133,23 @@ _frosty_vps_image_url() {
     esac
 }
 
-_frosty_vps_ip() {
-    grep '^vm_ip=' "${FROSTY_VPS_IMG_DIR}/$1.meta" 2>/dev/null | cut -d= -f2
+# Every VM is always reached via 127.0.0.1 on its own assigned port —
+# there's no guest IP to track anymore since networking is host-side
+# port mapping, not a real network interface.
+_frosty_vps_sshport() {
+    grep '^ssh_port=' "${FROSTY_VPS_IMG_DIR}/$1.meta" 2>/dev/null | cut -d= -f2
+}
+
+_frosty_vps_meta_get() {
+    grep "^$2=" "${FROSTY_VPS_IMG_DIR}/$1.meta" 2>/dev/null | cut -d= -f2-
+}
+
+_frosty_vps_pm2_name() {
+    echo "frosty-vps-$1"
 }
 
 vps_kvm_exists_any() {
-    command -v virsh >/dev/null 2>&1 && virsh list --all --name 2>/dev/null | grep -q .
+    ls "${FROSTY_VPS_IMG_DIR}"/*.meta >/dev/null 2>&1
 }
 
 show_vps_kvm_menu() {
@@ -172,7 +176,7 @@ show_vps_kvm_menu() {
         1)
             if ! install_vps_stack; then
                 echo ""
-                echo -e "${C_YELLOW}No KVM detected on this host — switch to Docker VPS instead.${C_RESET}"
+                echo -e "${C_YELLOW}QEMU setup failed on this host.${C_RESET}"
                 echo ""
                 read -rp "  Press Enter to continue..." _
                 return 1
@@ -188,20 +192,68 @@ show_vps_kvm_menu() {
     show_vps_kvm_menu
 }
 
+# Builds the full QEMU command as an array and starts it under pm2.
+# Reads everything it needs from the VM's .meta file, so restarting a
+# VM later (after an edit, or after a host reboot) reproduces the
+# exact same launch config without asking anything again.
+_frosty_vps_launch() {
+    local vm_name="$1"
+    local img_key vm_ram vm_cpu ssh_port port_forwards
+    img_key="$(_frosty_vps_meta_get "$vm_name" image)"
+    vm_ram="$(_frosty_vps_meta_get "$vm_name" vm_ram)"
+    vm_cpu="$(_frosty_vps_meta_get "$vm_name" vm_cpu)"
+    ssh_port="$(_frosty_vps_meta_get "$vm_name" ssh_port)"
+    port_forwards="$(_frosty_vps_meta_get "$vm_name" port_forwards)"
+
+    local vm_disk_path="${FROSTY_VPS_IMG_DIR}/${vm_name}.qcow2"
+    local seed_iso="${FROSTY_VPS_IMG_DIR}/${vm_name}-seed.iso"
+
+    local hostfwd="hostfwd=tcp::${ssh_port}-:22"
+    if [[ -n "$port_forwards" ]]; then
+        IFS=',' read -ra fwds <<< "$port_forwards"
+        for fw in "${fwds[@]}"; do
+            [[ -n "$fw" ]] && hostfwd="${hostfwd},hostfwd=tcp::${fw%%:*}-:${fw##*:}"
+        done
+    fi
+
+    local accel_args=()
+    if [[ "$(_frosty_vps_kvm_usable)" -eq 1 ]]; then
+        accel_args=(-enable-kvm -cpu host)
+    else
+        accel_args=(-cpu qemu64)
+    fi
+
+    load_module "pm2.sh"
+    if ! _frosty_ensure_pm2; then
+        _frosty_fail "pm2 unavailable — cannot start VM '${vm_name}'"
+        return 1
+    fi
+    pm2 delete "$(_frosty_vps_pm2_name "$vm_name")" >/dev/null 2>&1
+
+    _frosty_pm2_start "$(_frosty_vps_pm2_name "$vm_name")" "$FROSTY_VPS_IMG_DIR" \
+        "qemu-system-x86_64" \
+        "-name" "$vm_name" \
+        "-m" "$vm_ram" \
+        "-smp" "$vm_cpu" \
+        "${accel_args[@]}" \
+        "-drive" "file=${vm_disk_path},format=qcow2,if=virtio" \
+        "-drive" "file=${seed_iso},format=raw,if=virtio" \
+        "-netdev" "user,id=n0,${hostfwd}" \
+        "-device" "virtio-net-pci,netdev=n0" \
+        "-nographic" \
+        "-serial" "null" \
+        "-monitor" "none" \
+        "-display" "none"
+}
+
 vps_create() {
     echo ""
     echo -e "${C_CYAN:-}== Create New VPS ==${C_RESET:-}"
     echo ""
-
-    if ! _frosty_vps_ensure_libvirt_running; then
-        _frosty_fail "libvirtd/virtlogd is not running and could not be restarted"
-        return 1
-    fi
-
     read -rp "  VM name (e.g. client1-vps): " vm_name
     [[ -z "$vm_name" ]] && { _frosty_fail "Name required"; return 1; }
 
-    if virsh dominfo "$vm_name" >/dev/null 2>&1; then
+    if [[ -f "${FROSTY_VPS_IMG_DIR}/${vm_name}.meta" ]]; then
         _frosty_fail "A VM named '$vm_name' already exists"
         return 1
     fi
@@ -245,6 +297,12 @@ vps_create() {
         return 1
     fi
 
+    local ssh_port=2200
+    while ss -ltn 2>/dev/null | grep -q ":${ssh_port} " || [[ -f "${FROSTY_VPS_IMG_DIR}/.port_${ssh_port}" ]]; do
+        ssh_port=$((ssh_port + 1))
+    done
+    touch "${FROSTY_VPS_IMG_DIR}/.port_${ssh_port}"
+
     read -rsp "  Set root password for the VM: " vm_pass
     echo ""
     if [[ -z "$vm_pass" ]]; then
@@ -258,8 +316,8 @@ vps_create() {
 
     if [[ ! -f "$base_img" ]]; then
         echo "    Downloading ${img_key} cloud image (this may take a few minutes)..."
-        if ! timeout 900 curl -L -o "$base_img" "$img_url" >/tmp/frosty_vps_download.log 2>&1; then
-            _frosty_fail "Image download failed or timed out after 15 minutes — see /tmp/frosty_vps_download.log"
+        if ! timeout 900 curl -fL -o "$base_img" "$img_url" >/tmp/frosty_vps_download.log 2>&1; then
+            _frosty_fail "Image download failed or timed out — see /tmp/frosty_vps_download.log"
             rm -f "$base_img"
             return 1
         fi
@@ -301,60 +359,27 @@ CIEOF
 
     genisoimage -output "$seed_iso" -volid cidata -joliet -rock "${cloud_dir}/user-data" "${cloud_dir}/meta-data" >/tmp/frosty_vps_iso.log 2>&1
 
-    if ! _frosty_vps_ensure_libvirt_running; then
-        _frosty_fail "libvirtd/virtlogd died right before VM creation and could not be restarted"
-        return 1
-    fi
-
-    echo "    Creating VM..."
-    if virt-install \
-        --name "$vm_name" \
-        --memory "$vm_ram" \
-        --vcpus "$vm_cpu" \
-        --disk path="$vm_disk_path",format=qcow2 \
-        --disk path="$seed_iso",device=cdrom \
-        --os-variant generic \
-        --network network=default,model=virtio \
-        --graphics none \
-        --import \
-        --noautoconsole >/tmp/frosty_vps_create.log 2>&1; then
-        _frosty_ok "VM '${vm_name}' created and starting"
-    else
-        _frosty_fail "VM creation failed — see /tmp/frosty_vps_create.log"
-        return 1
-    fi
-
-        echo "    Waiting for VM to get an IP address (up to 120s)..."
-    local vm_ip=""
-    for i in $(seq 1 40); do
-        vm_ip="$(virsh domifaddr "$vm_name" 2>/dev/null | awk '/ipv4/{print $4}' | cut -d/ -f1)"
-        [[ -n "$vm_ip" ]] && break
-        sleep 3
-    done
-
-    if [[ -z "$vm_ip" ]]; then
-        _frosty_warn "Could not determine VM IP after 60s — the VM is still created and running"
-        _frosty_warn "This usually means DHCP/networking isn't working in this environment (common in sandboxed/nested-virt hosts)"
-        _frosty_warn "You can still access it via serial console: option [14] Live Terminal, or 'virsh console ${vm_name}'"
-        _frosty_warn "Check manually with: virsh domifaddr ${vm_name}"
-    else
-        _frosty_ok "VM IP: ${vm_ip}"
-    fi
-
     cat > "${FROSTY_VPS_IMG_DIR}/${vm_name}.meta" << METAEOF
 image=${img_key}
-vm_ip=${vm_ip}
+vm_ram=${vm_ram}
+vm_cpu=${vm_cpu}
+vm_disk=${vm_disk}
+ssh_port=${ssh_port}
+port_forwards=
 created=$(date '+%Y-%m-%d %H:%M:%S')
 METAEOF
 
-    echo ""
-    if [[ -z "$vm_ip" ]]; then
-        echo "    Skipping SSH-based post-setup (no network yet) — you can run it manually via console once network is confirmed working."
-    else
-    echo "    Waiting for SSH to come up inside the VM (up to 60s)..."
+    echo "    Starting VM under pm2..."
+    if ! _frosty_vps_launch "$vm_name"; then
+        _frosty_fail "Failed to start VM — check: pm2 logs $(_frosty_vps_pm2_name "$vm_name")"
+        return 1
+    fi
+    _frosty_ok "VM '${vm_name}' created and starting (SSH will be on 127.0.0.1:${ssh_port})"
+
+    echo "    Waiting for SSH to come up inside the VM (up to 90s — first boot is slower)..."
     local ssh_ready=0
-    for i in $(seq 1 20); do
-        if ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -o StrictHostKeyChecking=no -o ConnectTimeout=3 -o BatchMode=yes "root@${vm_ip}" "echo ok" >/dev/null 2>&1; then
+    for i in $(seq 1 30); do
+        if ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -p "$ssh_port" -o StrictHostKeyChecking=no -o ConnectTimeout=3 -o BatchMode=yes "root@127.0.0.1" "echo ok" >/dev/null 2>&1; then
             ssh_ready=1
             break
         fi
@@ -362,11 +387,12 @@ METAEOF
     done
 
     if [[ "$ssh_ready" -eq 0 ]]; then
-        _frosty_warn "SSH not reachable yet after 60s — skipping auto post-setup, run it manually once it is up"
+        _frosty_warn "SSH not reachable yet after 90s — it may still be booting. Check: pm2 logs $(_frosty_vps_pm2_name "$vm_name")"
+        _frosty_warn "Retry manually later with: ssh -i ${FROSTY_VPS_DIR}/frosty_vps_key -p ${ssh_port} root@127.0.0.1"
     else
         _frosty_ok "SSH reachable"
         echo "    Running post-boot setup (update, upgrade, fetch tool)..."
-        ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -o StrictHostKeyChecking=no -o BatchMode=yes "root@${vm_ip}" '
+        ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -p "$ssh_port" -o StrictHostKeyChecking=no -o BatchMode=yes "root@127.0.0.1" '
             export DEBIAN_FRONTEND=noninteractive
             apt update -y
             apt upgrade -y
@@ -374,19 +400,19 @@ METAEOF
                 apt install -y neofetch
             elif apt-cache show screenfetch >/dev/null 2>&1; then
                 apt install -y screenfetch
-            else
-                echo "Neither neofetch nor screenfetch available in repos"
             fi
         ' >/tmp/frosty_vps_postsetup_${vm_name}.log 2>&1
 
         if [[ $? -eq 0 ]]; then
-            _frosty_ok "Post-boot setup complete (apt update/upgrade + fetch tool installed)"
+            _frosty_ok "Post-boot setup complete"
         else
             _frosty_warn "Post-boot setup had issues — see /tmp/frosty_vps_postsetup_${vm_name}.log"
         fi
     fi
-    fi
 
+    echo ""
+    echo -e "    ${C_CYAN:-}Connect with:${C_RESET:-}"
+    echo "      ssh -i ${FROSTY_VPS_DIR}/frosty_vps_key -p ${ssh_port} root@<this-server-ip>"
     echo ""
     echo "  Share this VM now? [1] tmate  [2] sshx  [3] Live Terminal (local)  [4] Skip"
     read -rp "  Choice [1-4]: " share_now
@@ -404,7 +430,12 @@ vps_list() {
     echo ""
     echo "== VPS Instances =="
     _frosty_vps_check_stack || return 1
-    virsh list --all
+    load_module "pm2.sh"
+    if command -v pm2 >/dev/null 2>&1; then
+        pm2 list 2>/dev/null | grep -E "frosty-vps-|Module|─" || echo "  No VMs found."
+    else
+        ls "${FROSTY_VPS_IMG_DIR}"/*.meta 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.meta$//' || echo "  No VMs found."
+    fi
 }
 
 vps_dashboard() {
@@ -412,32 +443,30 @@ vps_dashboard() {
     echo -e "${C_CYAN:-}== VPS Resource Dashboard ==${C_RESET:-}"
     _frosty_vps_check_stack || return 1
 
-    local vms
-    vms="$(virsh list --all --name 2>/dev/null | grep -v '^$')"
-
-    if [[ -z "$vms" ]]; then
+    local metas
+    metas="$(ls "${FROSTY_VPS_IMG_DIR}"/*.meta 2>/dev/null)"
+    if [[ -z "$metas" ]]; then
         echo "  No VMs found."
         return 0
     fi
 
-    printf "  %-20s %-10s %-8s %-8s %-8s\n" "NAME" "STATE" "vCPUs" "RAM(MB)" "DISK"
-    printf "  %-20s %-10s %-8s %-8s %-8s\n" "----" "-----" "-----" "-------" "----"
+    printf "  %-20s %-10s %-8s %-8s %-8s %-8s\n" "NAME" "STATE" "vCPUs" "RAM(MB)" "DISK(GB)" "PORT"
+    printf "  %-20s %-10s %-8s %-8s %-8s %-8s\n" "----" "-----" "-----" "-------" "--------" "----"
 
-    while IFS= read -r vm; do
-        [[ -z "$vm" ]] && continue
-        local state cpus mem disk
-        state="$(virsh domstate "$vm" 2>/dev/null)"
-        cpus="$(virsh dominfo "$vm" 2>/dev/null | grep '^CPU(s)' | awk '{print $2}')"
-        mem="$(virsh dominfo "$vm" 2>/dev/null | grep '^Used memory' | awk '{print int($3/1024)}')"
-        local disk_path="${FROSTY_VPS_IMG_DIR}/${vm}.qcow2"
-        if [[ -f "$disk_path" ]]; then
-            disk="$(qemu-img info "$disk_path" 2>/dev/null | grep 'virtual size' | awk '{print $3}')"
-        else
-            disk="?"
+    for meta in $metas; do
+        local vm
+        vm="$(basename "$meta" .meta)"
+        local state="stopped"
+        if pm2 describe "$(_frosty_vps_pm2_name "$vm")" 2>/dev/null | grep -q "online"; then
+            state="running"
         fi
-        printf "  %-20s %-10s %-8s %-8s %-8s\n" "$vm" "$state" "${cpus:-?}" "${mem:-?}" "${disk:-?}"
-    done <<< "$vms"
-
+        printf "  %-20s %-10s %-8s %-8s %-8s %-8s\n" \
+            "$vm" "$state" \
+            "$(_frosty_vps_meta_get "$vm" vm_cpu)" \
+            "$(_frosty_vps_meta_get "$vm" vm_ram)" \
+            "$(_frosty_vps_meta_get "$vm" vm_disk)" \
+            "$(_frosty_vps_meta_get "$vm" ssh_port)"
+    done
     echo ""
 }
 
@@ -445,10 +474,14 @@ vps_start() {
     echo ""
     _frosty_vps_check_stack || return 1
     read -rp "  VM name to start: " vm_name
-    if virsh start "$vm_name" >/tmp/frosty_vps_start.log 2>&1; then
+    if [[ ! -f "${FROSTY_VPS_IMG_DIR}/${vm_name}.meta" ]]; then
+        _frosty_fail "VM '$vm_name' not found"
+        return 1
+    fi
+    if _frosty_vps_launch "$vm_name"; then
         _frosty_ok "'$vm_name' started"
     else
-        _frosty_fail "Start failed — see /tmp/frosty_vps_start.log"
+        _frosty_fail "Start failed — check: pm2 logs $(_frosty_vps_pm2_name "$vm_name")"
         return 1
     fi
 }
@@ -457,10 +490,12 @@ vps_stop() {
     echo ""
     _frosty_vps_check_stack || return 1
     read -rp "  VM name to stop: " vm_name
-    if virsh shutdown "$vm_name" >/tmp/frosty_vps_stop.log 2>&1; then
-        _frosty_ok "'$vm_name' shutdown signal sent"
+    load_module "pm2.sh"
+    if pm2 stop "$(_frosty_vps_pm2_name "$vm_name")" >/dev/null 2>&1; then
+        _frosty_ok "'$vm_name' stop signal sent"
+        _frosty_warn "Note: this is a hard stop (SIGTERM to QEMU), not a graceful OS shutdown — same as unplugging power"
     else
-        _frosty_fail "Stop failed — see /tmp/frosty_vps_stop.log"
+        _frosty_fail "Stop failed — VM may not be running"
         return 1
     fi
 }
@@ -469,34 +504,33 @@ vps_edit_config() {
     echo ""
     _frosty_vps_check_stack || return 1
     read -rp "  VM name to edit: " vm_name
-    if ! virsh dominfo "$vm_name" >/dev/null 2>&1; then
+    if [[ ! -f "${FROSTY_VPS_IMG_DIR}/${vm_name}.meta" ]]; then
         _frosty_fail "VM '$vm_name' not found"
         return 1
     fi
 
-    echo "  [1] Change RAM  [2] Change vCPUs  [3] Open full XML editor"
+    echo "  [1] Change RAM  [2] Change vCPUs"
+    echo -e "  ${C_YELLOW:-}Note: changes require a restart to take effect (no live-resize without libvirt)${C_RESET:-}"
     read -rp "  Choice: " edit_choice
+    local meta="${FROSTY_VPS_IMG_DIR}/${vm_name}.meta"
     case "$edit_choice" in
         1)
             read -rp "  New RAM in MB: " new_ram
-            virsh shutdown "$vm_name" >/dev/null 2>&1
-            sleep 3
-            virsh setmaxmem "$vm_name" "${new_ram}M" --config >/dev/null 2>&1
-            virsh setmem "$vm_name" "${new_ram}M" --config >/dev/null 2>&1
-            virsh start "$vm_name" >/dev/null 2>&1
+            new_ram="$(echo "$new_ram" | tr -cd '0-9')"
+            sed -i "s/^vm_ram=.*/vm_ram=${new_ram}/" "$meta"
+            load_module "pm2.sh"
+            pm2 delete "$(_frosty_vps_pm2_name "$vm_name")" >/dev/null 2>&1
+            _frosty_vps_launch "$vm_name"
             _frosty_ok "RAM updated to ${new_ram}MB, VM restarted"
             ;;
         2)
             read -rp "  New vCPU count: " new_cpu
-            virsh shutdown "$vm_name" >/dev/null 2>&1
-            sleep 3
-            virsh setvcpus "$vm_name" "$new_cpu" --config --maximum >/dev/null 2>&1
-            virsh setvcpus "$vm_name" "$new_cpu" --config >/dev/null 2>&1
-            virsh start "$vm_name" >/dev/null 2>&1
+            new_cpu="$(echo "$new_cpu" | tr -cd '0-9')"
+            sed -i "s/^vm_cpu=.*/vm_cpu=${new_cpu}/" "$meta"
+            load_module "pm2.sh"
+            pm2 delete "$(_frosty_vps_pm2_name "$vm_name")" >/dev/null 2>&1
+            _frosty_vps_launch "$vm_name"
             _frosty_ok "vCPUs updated to ${new_cpu}, VM restarted"
-            ;;
-        3)
-            virsh edit "$vm_name"
             ;;
         *) _frosty_fail "Invalid choice" ;;
     esac
@@ -511,25 +545,36 @@ vps_delete() {
         echo "Cancelled."
         return 1
     fi
-    virsh destroy "$vm_name" >/dev/null 2>&1
-    virsh undefine "$vm_name" --remove-all-storage >/tmp/frosty_vps_delete.log 2>&1
-    rm -rf "${FROSTY_VPS_IMG_DIR}/${vm_name}-cloudinit" "${FROSTY_VPS_IMG_DIR}/${vm_name}-seed.iso" "${FROSTY_VPS_IMG_DIR}/${vm_name}.meta"
+    load_module "pm2.sh"
+    pm2 delete "$(_frosty_vps_pm2_name "$vm_name")" >/dev/null 2>&1
+    local ssh_port
+    ssh_port="$(_frosty_vps_sshport "$vm_name")"
+    [[ -n "$ssh_port" ]] && rm -f "${FROSTY_VPS_IMG_DIR}/.port_${ssh_port}"
+    rm -rf "${FROSTY_VPS_IMG_DIR}/${vm_name}-cloudinit" "${FROSTY_VPS_IMG_DIR}/${vm_name}-seed.iso" \
+        "${FROSTY_VPS_IMG_DIR}/${vm_name}.qcow2" "${FROSTY_VPS_IMG_DIR}/${vm_name}.meta"
     rm -rf "${FROSTY_VPS_SNAP_DIR}/${vm_name}"
     _frosty_ok "'$vm_name' deleted"
 }
 
+# Internal qcow2 snapshots via qemu-img — the VM must be stopped first
+# since these aren't live/QMP-based snapshots, just offline disk state.
 vps_snapshot_create() {
     echo ""
     _frosty_vps_check_stack || return 1
     read -rp "  VM name to snapshot: " vm_name
-    if ! virsh dominfo "$vm_name" >/dev/null 2>&1; then
+    local disk="${FROSTY_VPS_IMG_DIR}/${vm_name}.qcow2"
+    if [[ ! -f "$disk" ]]; then
         _frosty_fail "VM '$vm_name' not found"
+        return 1
+    fi
+    if pm2 describe "$(_frosty_vps_pm2_name "$vm_name")" 2>/dev/null | grep -q "online"; then
+        _frosty_fail "Stop the VM first — snapshots require it to be offline"
         return 1
     fi
     read -rp "  Snapshot name (e.g. before-update): " snap_name
     [[ -z "$snap_name" ]] && snap_name="snap-$(date +%Y%m%d-%H%M%S)"
 
-    if virsh snapshot-create-as "$vm_name" "$snap_name" --description "Frosty snapshot" >/tmp/frosty_vps_snap.log 2>&1; then
+    if qemu-img snapshot -c "$snap_name" "$disk" >/tmp/frosty_vps_snap.log 2>&1; then
         _frosty_ok "Snapshot '$snap_name' created for '$vm_name'"
     else
         _frosty_fail "Snapshot creation failed — see /tmp/frosty_vps_snap.log"
@@ -541,21 +586,26 @@ vps_snapshot_list() {
     echo ""
     read -rp "  VM name: " vm_name
     echo "== Snapshots for $vm_name =="
-    virsh snapshot-list "$vm_name" 2>&1
+    qemu-img snapshot -l "${FROSTY_VPS_IMG_DIR}/${vm_name}.qcow2" 2>&1
 }
 
 vps_snapshot_restore() {
     echo ""
     read -rp "  VM name: " vm_name
-    virsh snapshot-list "$vm_name" 2>/dev/null
+    local disk="${FROSTY_VPS_IMG_DIR}/${vm_name}.qcow2"
+    qemu-img snapshot -l "$disk" 2>/dev/null
     echo ""
+    if pm2 describe "$(_frosty_vps_pm2_name "$vm_name")" 2>/dev/null | grep -q "online"; then
+        _frosty_fail "Stop the VM first — restoring requires it to be offline"
+        return 1
+    fi
     read -rp "  Snapshot name to restore: " snap_name
     read -rp "  Type RESTORE to confirm reverting '$vm_name' to '$snap_name': " confirm
     if [[ "$confirm" != "RESTORE" ]]; then
         echo "Cancelled."
         return 1
     fi
-    if virsh snapshot-revert "$vm_name" "$snap_name" >/tmp/frosty_vps_restore.log 2>&1; then
+    if qemu-img snapshot -a "$snap_name" "$disk" >/tmp/frosty_vps_restore.log 2>&1; then
         _frosty_ok "'$vm_name' reverted to snapshot '$snap_name'"
     else
         _frosty_fail "Restore failed — see /tmp/frosty_vps_restore.log"
@@ -566,10 +616,11 @@ vps_snapshot_restore() {
 vps_snapshot_delete() {
     echo ""
     read -rp "  VM name: " vm_name
-    virsh snapshot-list "$vm_name" 2>/dev/null
+    local disk="${FROSTY_VPS_IMG_DIR}/${vm_name}.qcow2"
+    qemu-img snapshot -l "$disk" 2>/dev/null
     echo ""
     read -rp "  Snapshot name to delete: " snap_name
-    if virsh snapshot-delete "$vm_name" "$snap_name" >/tmp/frosty_vps_snapdel.log 2>&1; then
+    if qemu-img snapshot -d "$snap_name" "$disk" >/tmp/frosty_vps_snapdel.log 2>&1; then
         _frosty_ok "Snapshot '$snap_name' deleted"
     else
         _frosty_fail "Delete failed — see /tmp/frosty_vps_snapdel.log"
@@ -583,9 +634,9 @@ show_vps_snapshot_submenu() {
     echo -e "${C_CYAN}╔══════════════════════════════════════════════╗${C_RESET}"
     echo -e "${C_CYAN}║          ❄  S N A P S H O T S  ❄              ║${C_RESET}"
     echo -e "${C_CYAN}╠══════════════════════════════════════════════╣${C_RESET}"
-    echo -e "${C_CYAN}║  [1] Create Snapshot                          ║${C_RESET}"
+    echo -e "${C_CYAN}║  [1] Create Snapshot (VM must be stopped)     ║${C_RESET}"
     echo -e "${C_CYAN}║  [2] List Snapshots                           ║${C_RESET}"
-    echo -e "${C_CYAN}║  [3] Restore Snapshot                         ║${C_RESET}"
+    echo -e "${C_CYAN}║  [3] Restore Snapshot (VM must be stopped)    ║${C_RESET}"
     echo -e "${C_CYAN}║  [4] Delete Snapshot                          ║${C_RESET}"
     echo -e "${C_CYAN}║  [5] Back                                     ║${C_RESET}"
     echo -e "${C_CYAN}╚══════════════════════════════════════════════╝${C_RESET}"
@@ -604,33 +655,44 @@ show_vps_snapshot_submenu() {
     show_vps_snapshot_submenu
 }
 
+# Port forwards are QEMU hostfwd rules baked in at launch time — unlike
+# the old iptables-based approach, there's no live "add a rule" without
+# restarting the VM's QEMU process (SLIRP forwards are fixed at start).
 vps_firewall_add() {
     echo ""
     read -rp "  VM name: " vm_name
-    local vm_ip
-    vm_ip="$(_frosty_vps_ip "$vm_name")"
-    if [[ -z "$vm_ip" ]]; then
-        _frosty_fail "No IP on record for '$vm_name'"
+    local meta="${FROSTY_VPS_IMG_DIR}/${vm_name}.meta"
+    if [[ ! -f "$meta" ]]; then
+        _frosty_fail "VM '$vm_name' not found"
         return 1
     fi
 
     read -rp "  Host port to forward (e.g. 25565): " new_port
     read -rp "  Guest port (usually same, e.g. 25565): " guest_port
     guest_port="${guest_port:-$new_port}"
-    read -rp "  Protocol (tcp/udp) [tcp]: " proto
-    proto="${proto:-tcp}"
 
-    iptables -t nat -A PREROUTING -p "$proto" --dport "$new_port" -j DNAT --to-destination "${vm_ip}:${guest_port}" -m comment --comment "frosty-${vm_name}-${new_port}"
-    iptables -A FORWARD -p "$proto" -d "$vm_ip" --dport "$guest_port" -j ACCEPT -m comment --comment "frosty-${vm_name}-${new_port}"
+    local existing
+    existing="$(_frosty_vps_meta_get "$vm_name" port_forwards)"
+    local updated="${existing:+${existing},}${new_port}:${guest_port}"
+    sed -i "s/^port_forwards=.*/port_forwards=${updated}/" "$meta"
 
-    _frosty_ok "Host port ${new_port}/${proto} -> ${vm_ip}:${guest_port} forwarded for '$vm_name'"
+    _frosty_ok "Port ${new_port} -> guest:${guest_port} added"
+    _frosty_warn "This takes effect on the VM's NEXT restart (Stop, then Start) — SLIRP forwards are fixed at launch"
 }
 
 vps_firewall_list() {
     echo ""
     read -rp "  VM name: " vm_name
     echo "== Forwarded Ports for $vm_name =="
-    iptables -t nat -L PREROUTING -n --line-numbers | grep "frosty-${vm_name}-"
+    echo "  SSH: $(_frosty_vps_sshport "$vm_name") -> guest:22"
+    local forwards
+    forwards="$(_frosty_vps_meta_get "$vm_name" port_forwards)"
+    if [[ -n "$forwards" ]]; then
+        IFS=',' read -ra fwds <<< "$forwards"
+        for fw in "${fwds[@]}"; do
+            echo "  ${fw%%:*} -> guest:${fw##*:}"
+        done
+    fi
 }
 
 show_vps_firewall_submenu() {
@@ -656,49 +718,38 @@ show_vps_firewall_submenu() {
     show_vps_firewall_submenu
 }
 
-# Opens a direct, interactive SSH session into the VM right in the current
-# terminal — no tmate, no shareable link, just an immediate live session
-# for the person sitting at this machine.
-# Opens a direct, interactive session into the VM right in the current
-# terminal. Tries SSH first (needs an IP + working network); if that's
-# not available, falls back to the VM's serial console via virsh, which
-# talks directly to the virtual serial port and needs no networking at
-# all — this works even when the VM never got a DHCP lease.
+# Direct SSH into the VM via its hostfwd port — always 127.0.0.1, since
+# there's no separate guest IP in user-mode networking.
 vps_live_terminal() {
     echo ""
     echo -e "${C_CYAN:-}== Live Terminal (Local) ==${C_RESET:-}"
     read -rp "  VM name to open: " vm_name
 
-    if ! virsh dominfo "$vm_name" >/dev/null 2>&1; then
+    local ssh_port
+    ssh_port="$(_frosty_vps_sshport "$vm_name")"
+    if [[ -z "$ssh_port" ]]; then
         _frosty_fail "VM '$vm_name' not found"
         return 1
     fi
 
-    if [[ "$(virsh domstate "$vm_name" 2>/dev/null)" != "running" ]]; then
+    if ! pm2 describe "$(_frosty_vps_pm2_name "$vm_name")" 2>/dev/null | grep -q "online"; then
         _frosty_warn "'$vm_name' is not running — starting it first..."
-        virsh start "$vm_name" >/dev/null 2>&1
-        sleep 3
+        _frosty_vps_launch "$vm_name"
+        sleep 5
     fi
 
-    local vm_ip
-    vm_ip="$(_frosty_vps_ip "$vm_name")"
-
-    if [[ -n "$vm_ip" ]] && ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes "root@${vm_ip}" "echo ok" >/dev/null 2>&1; then
-        echo -e "    ${C_YELLOW:-}Opening a live terminal into '$vm_name' (${vm_ip}) via SSH. Type 'exit' to return.${C_RESET:-}"
-        echo ""
-        ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -o StrictHostKeyChecking=no -t "root@${vm_ip}" "command -v neofetch >/dev/null 2>&1 && neofetch || (command -v screenfetch >/dev/null 2>&1 && screenfetch); exec bash -l"
-        echo ""
-        _frosty_ok "Returned from live terminal into '$vm_name'"
-        return 0
+    echo "    Checking SSH is reachable..."
+    if ! ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -p "$ssh_port" -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes "root@127.0.0.1" "echo ok" >/dev/null 2>&1; then
+        _frosty_fail "Could not reach '$vm_name' on port ${ssh_port} — it may still be booting"
+        _frosty_warn "Try again in a few seconds, or check: pm2 logs $(_frosty_vps_pm2_name "$vm_name")"
+        return 1
     fi
 
-    _frosty_warn "SSH not available (no IP yet, or network not up) — falling back to the VM's serial console"
-    echo -e "    ${C_YELLOW:-}Opening serial console into '$vm_name'. Press Ctrl+] to exit the console.${C_RESET:-}"
-    echo -e "    ${C_YELLOW:-}Note: you may need to press Enter once to see a login prompt.${C_RESET:-}"
+    echo -e "    ${C_YELLOW:-}Opening a live terminal into '$vm_name'. Type 'exit' to return.${C_RESET:-}"
     echo ""
-    virsh console "$vm_name"
+    ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -p "$ssh_port" -o StrictHostKeyChecking=no -t "root@127.0.0.1" "command -v neofetch >/dev/null 2>&1 && neofetch || (command -v screenfetch >/dev/null 2>&1 && screenfetch); exec bash -l"
     echo ""
-    _frosty_ok "Returned from console into '$vm_name'"
+    _frosty_ok "Returned from live terminal into '$vm_name'"
 }
 
 vps_share_tmate() {
@@ -706,62 +757,44 @@ vps_share_tmate() {
     echo "== Share Terminal via tmate =="
     read -rp "  VM name to access: " vm_name
 
-    local vm_ip
-    vm_ip="$(_frosty_vps_ip "$vm_name")"
-    if [[ -z "$vm_ip" ]]; then
-        _frosty_fail "No IP on record for '$vm_name'"
+    local ssh_port
+    ssh_port="$(_frosty_vps_sshport "$vm_name")"
+    if [[ -z "$ssh_port" ]]; then
+        _frosty_fail "VM '$vm_name' not found"
         return 1
     fi
 
     if ! command -v tmate >/dev/null 2>&1; then
         echo "    Installing tmate..."
-        DEBIAN_FRONTEND=noninteractive apt-get install -y tmate >/tmp/frosty_tmate_install.log 2>&1
+        DEBIAN_FRONTEND=noninteractive apt-get update -y >/tmp/frosty_tmate_install.log 2>&1
+        DEBIAN_FRONTEND=noninteractive apt-get install -y tmate >>/tmp/frosty_tmate_install.log 2>&1
+        if ! command -v tmate >/dev/null 2>&1; then
+            _frosty_fail "tmate install failed — see /tmp/frosty_tmate_install.log"
+            return 1
+        fi
     fi
 
     echo "    Checking connectivity to tmate's relay server..."
-    if ! timeout 5 bash -c "cat < /dev/null > /dev/tcp/tmate.io/22" 2>/dev/null; then
+    if ! timeout 6 bash -c "cat < /dev/null > /dev/tcp/tmate.io/22" 2>/dev/null; then
         _frosty_fail "Cannot reach tmate.io on port 22 from this host"
-        _frosty_warn "This network likely blocks outbound port 22. Use sshx instead — it works over port 443."
-        echo ""
-        read -rp "  Switch to sshx now instead? [y/n]: " switch_choice
-        if [[ "$switch_choice" =~ ^[Yy]$ ]]; then
-            vps_share_sshx <<< "$vm_name"
-        fi
+        _frosty_warn "This network likely blocks outbound port 22. Try sshx instead — it works over port 443."
         return 1
     fi
+    _frosty_ok "tmate.io is reachable"
+
     local tmate_sock="/tmp/frosty-tmate-${vm_name}.sock"
     local ssh_line=""
-
-    # Checking exit code alone isn't enough — a stale local socket from a
-    # session whose link never actually populated still returns exit 0
-    # with an empty value.
     ssh_line="$(tmate -S "$tmate_sock" display -p '#{tmate_ssh}' 2>/dev/null)"
+
     if [[ -n "$ssh_line" ]]; then
         _frosty_ok "Existing tmate session for '$vm_name' is still alive — reusing it"
     else
-        if [[ -S "$tmate_sock" ]]; then
-            _frosty_warn "Found a stale/dead tmate socket for '$vm_name' — cleaning it up and starting fresh"
-            tmate -S "$tmate_sock" kill-server >/dev/null 2>&1
-        fi
-
-        echo "    Checking connectivity to tmate's relay server..."
-        if ! timeout 6 bash -c "cat < /dev/null > /dev/tcp/tmate.io/22" 2>/dev/null; then
-            _frosty_fail "Cannot reach tmate.io on port 22 from this host"
-            _frosty_warn "This environment's network likely blocks outbound access to tmate's relay servers."
-            return 1
-        fi
-        _frosty_ok "tmate.io is reachable"
-
-        echo -e "    ${C_CYAN:-}Starting a new tmate session into VM '$vm_name'...${C_RESET:-}"
+        [[ -S "$tmate_sock" ]] && tmate -S "$tmate_sock" kill-server >/dev/null 2>&1
         rm -f "$tmate_sock"
-        tmate -v -S "$tmate_sock" -f /dev/null new-session -d -n frosty-vps \
-            "ssh -i ${FROSTY_VPS_DIR}/frosty_vps_key -o StrictHostKeyChecking=no -t root@${vm_ip} 'command -v neofetch >/dev/null 2>&1 && neofetch || screenfetch; exec bash -l'" \
+        echo -e "    ${C_CYAN:-}Starting a new tmate session into VM '$vm_name'...${C_RESET:-}"
+        tmate -S "$tmate_sock" -f /dev/null new-session -d -n frosty-vps \
+            "ssh -i ${FROSTY_VPS_DIR}/frosty_vps_key -p ${ssh_port} -o StrictHostKeyChecking=no -t root@127.0.0.1 'command -v neofetch >/dev/null 2>&1 && neofetch || screenfetch; exec bash -l'" \
             2>/tmp/frosty_tmate_session.log
-
-        if [[ $? -ne 0 ]]; then
-            _frosty_fail "tmate failed to start a session — see /tmp/frosty_tmate_session.log"
-            return 1
-        fi
 
         echo -n "    Waiting for tmate to establish the session"
         local waited=0
@@ -775,8 +808,7 @@ vps_share_tmate() {
         echo ""
 
         if [[ -z "$ssh_line" ]]; then
-            _frosty_fail "tmate session did not come up after ${waited}s despite tmate.io being reachable"
-            _frosty_warn "Check /tmp/frosty_tmate_session.log for details."
+            _frosty_fail "tmate session did not come up after ${waited}s — see /tmp/frosty_tmate_session.log"
             return 1
         fi
     fi
@@ -794,9 +826,7 @@ vps_rejoin_tmate() {
     local tmate_sock="/tmp/frosty-tmate-${vm_name}.sock"
     local ssh_line=""
 
-    if [[ -S "$tmate_sock" ]]; then
-        ssh_line="$(tmate -S "$tmate_sock" display -p '#{tmate_ssh}' 2>/dev/null)"
-    fi
+    [[ -S "$tmate_sock" ]] && ssh_line="$(tmate -S "$tmate_sock" display -p '#{tmate_ssh}' 2>/dev/null)"
 
     if [[ -z "$ssh_line" ]]; then
         _frosty_warn "No live tmate session found for '$vm_name' — starting a new one instead"
@@ -816,10 +846,10 @@ vps_share_sshx() {
     echo "== Share Terminal via sshx =="
     read -rp "  VM name to access: " vm_name
 
-    local vm_ip
-    vm_ip="$(_frosty_vps_ip "$vm_name")"
-    if [[ -z "$vm_ip" ]]; then
-        _frosty_fail "No IP on record for '$vm_name'"
+    local ssh_port
+    ssh_port="$(_frosty_vps_sshport "$vm_name")"
+    if [[ -z "$ssh_port" ]]; then
+        _frosty_fail "VM '$vm_name' not found"
         return 1
     fi
 
@@ -832,14 +862,12 @@ vps_share_sshx() {
         echo "    Checking connectivity to sshx.io..."
         if ! timeout 6 bash -c "cat < /dev/null > /dev/tcp/sshx.io/443" 2>/dev/null; then
             _frosty_fail "Cannot reach sshx.io from this host"
-            _frosty_warn "This environment's network likely blocks outbound access to sshx's relay servers."
             return 1
         fi
-
         echo -e "    ${C_CYAN:-}Starting a new sshx session into VM '$vm_name'...${C_RESET:-}"
         rm -f "$sshx_log"
         (
-            ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -o StrictHostKeyChecking=no -tt "root@${vm_ip}" "command -v sshx >/dev/null 2>&1 || curl -sSf https://sshx.io/get | sh; (command -v neofetch >/dev/null 2>&1 && neofetch || screenfetch) ; sshx" > "$sshx_log" 2>&1
+            ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -p "$ssh_port" -o StrictHostKeyChecking=no -tt "root@127.0.0.1" "command -v sshx >/dev/null 2>&1 || curl -sSf https://sshx.io/get | sh; (command -v neofetch >/dev/null 2>&1 && neofetch || screenfetch) ; sshx" > "$sshx_log" 2>&1
         ) &
         echo $! > "$sshx_pidfile"
 
@@ -861,7 +889,7 @@ vps_share_sshx() {
         echo -e "    ${C_YELLOW:-}Share this link for a live browser terminal into '$vm_name':${C_RESET:-}"
         echo "    $link"
     else
-        _frosty_warn "sshx link not detected yet — check $sshx_log manually, it may still be starting"
+        _frosty_warn "sshx link not detected yet — check $sshx_log manually"
     fi
 }
 
@@ -874,7 +902,7 @@ vps_rejoin_sshx() {
 
     if [[ ! -f "$sshx_pidfile" ]] || ! kill -0 "$(cat "$sshx_pidfile" 2>/dev/null)" 2>/dev/null; then
         _frosty_warn "No active sshx session found for '$vm_name' — starting a new one instead"
-        vps_share_sshx
+        vps_share_sshx <<< "$vm_name"
         return 0
     fi
 
