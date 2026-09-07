@@ -19,7 +19,19 @@ install_vps_docker_stack() {
     fi
 
     if ! docker info >/dev/null 2>&1; then
-        _frosty_fail "Docker is not available — cannot set up VPS containers"
+        _frosty_fail "Docker is not available or not working on this host"
+        echo ""
+        echo "  Docker VPS isn't usable here. Falling back to KVM/TCG VPS instead"
+        echo "  (a real VM — uses hardware acceleration if available, software"
+        echo "  emulation if not, rather than a container)."
+        read -rp "  Continue with KVM/TCG VPS setup now? [y/n]: " fallback_choice
+        if [[ "$fallback_choice" =~ ^[Yy]$ ]]; then
+            load_module "vps.sh"
+            if install_vps_stack; then
+                vps_create
+            fi
+            return 2
+        fi
         return 1
     fi
     _frosty_ok "Docker available"
@@ -53,8 +65,6 @@ vps_docker_exists_any() {
     command -v docker >/dev/null 2>&1 && docker ps -a --filter "name=frosty-vps-" -q 2>/dev/null | grep -q .
 }
 
-# Returns the published host SSH port for a VPS by reading its .meta file,
-# falling back to inspecting the live container if the meta is missing/old.
 _frosty_vps_docker_ssh_port() {
     local vm_name="$1"
     local meta="${FROSTY_VPS_DOCKER_DIR}/${vm_name}.meta"
@@ -93,14 +103,19 @@ show_vps_docker_menu() {
 
     case "$gate_choice" in
         1)
-            if ! install_vps_docker_stack; then
+            install_vps_docker_stack
+            local stack_rc=$?
+            if [[ $stack_rc -eq 1 ]]; then
                 echo ""
                 echo -e "${C_YELLOW}Docker setup failed on this host.${C_RESET}"
                 echo ""
                 read -rp "  Press Enter to continue..." _
                 return 1
+            elif [[ $stack_rc -eq 2 ]]; then
+                : # Already handled — KVM/TCG VPS was created instead
+            else
+                vps_docker_create
             fi
-            vps_docker_create
             ;;
         2) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
@@ -167,9 +182,6 @@ vps_docker_create() {
     local pubkey
     pubkey="$(cat "${FROSTY_VPS_DOCKER_DIR}/frosty_vps_key.pub" 2>/dev/null)"
 
-    # Find a free host port for SSH, starting at 2200 — this is what was
-    # missing before: without publishing a port, nothing outside the
-    # container could ever reach its sshd.
     local ssh_port=2200
     while docker ps -a --format '{{.Ports}}' | grep -q ":${ssh_port}->"; do
         ssh_port=$((ssh_port + 1))
@@ -215,9 +227,6 @@ vps_docker_create() {
         return 1
     fi
 
-    # Verify sshd actually stayed running before declaring success — some
-    # minimal base images silently refuse to start sshd if host keys are
-    # missing, so a clean exit code alone isn't proof it's really up.
     sleep 1
     if ! docker exec "frosty-vps-${vm_name}" pgrep -x sshd >/dev/null 2>&1; then
         _frosty_fail "sshd did not stay running inside the container — see /tmp/frosty_vps_docker_ssh_setup.log"
@@ -318,9 +327,6 @@ vps_docker_edit_config() {
     esac
 }
 
-# Opens a direct, interactive shell into the container right in the current
-# terminal — no tmate, no shareable link, just an immediate live session
-# for the person sitting at this machine.
 vps_docker_live_terminal() {
     echo ""
     echo -e "${C_CYAN:-}== Live Terminal (Local) ==${C_RESET:-}"
@@ -455,9 +461,6 @@ vps_docker_share_tmate() {
     local tmate_sock="/tmp/frosty-tmate-docker-${vm_name}.sock"
     local ssh_line=""
 
-    # Checking exit code alone isn't enough — a stale local socket from a
-    # session whose link never actually populated (e.g. hit before this
-    # fix, or a network hiccup) still returns exit 0 with an empty value.
     ssh_line="$(tmate -S "$tmate_sock" display -p '#{tmate_ssh}' 2>/dev/null)"
     if [[ -n "$ssh_line" ]]; then
         _frosty_ok "Existing tmate session for '$vm_name' is still alive — reusing it"
@@ -467,10 +470,6 @@ vps_docker_share_tmate() {
             tmate -S "$tmate_sock" kill-server >/dev/null 2>&1
         fi
 
-        # tmate needs to reach its relay server over the network. If that's
-        # blocked (sandboxed/firewalled dev environments commonly block
-        # this), the session will hang forever with zero error output —
-        # so check this BEFORE spending 20s waiting on a dead attempt.
         echo "    Checking connectivity to tmate's relay server..."
         if ! timeout 6 bash -c "cat < /dev/null > /dev/tcp/tmate.io/22" 2>/dev/null; then
             _frosty_fail "Cannot reach tmate.io on port 22 from this host"
@@ -492,9 +491,6 @@ vps_docker_share_tmate() {
             return 1
         fi
 
-        # Poll instead of a blind sleep — tmate needs a variable amount of
-        # time to reach its server and generate the link, and a fixed
-        # sleep 3 was frequently too short, leaving the link blank.
         echo -n "    Waiting for tmate to establish the session"
         local waited=0
         while [[ ${waited} -lt 20 ]]; do
