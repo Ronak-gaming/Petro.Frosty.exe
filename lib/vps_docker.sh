@@ -182,8 +182,12 @@ vps_docker_create() {
     local pubkey
     pubkey="$(cat "${FROSTY_VPS_DOCKER_DIR}/frosty_vps_key.pub" 2>/dev/null)"
 
+    # Check actual system-wide listening ports, not just other Docker
+    # containers' ports — the KVM/TCG VPS system (vps.sh) also claims
+    # host ports via QEMU hostfwd, and a Docker-only check had no way
+    # to see those, causing collisions between the two VPS systems.
     local ssh_port=2200
-    while docker ps -a --format '{{.Ports}}' | grep -q ":${ssh_port}->"; do
+    while ss -ltn 2>/dev/null | grep -q ":${ssh_port} " || docker ps -a --format '{{.Ports}}' | grep -q ":${ssh_port}->"; do
         ssh_port=$((ssh_port + 1))
     done
 
