@@ -461,7 +461,11 @@ vps_list() {
     _frosty_vps_check_stack || return 1
     load_module "pm2.sh"
     if command -v pm2 >/dev/null 2>&1; then
-        pm2 list 2>/dev/null | grep -E "frosty-vps-|Module|─" || echo "  No VMs found."
+        # Show pm2's full table rather than grep-filtering it — a filter
+        # that only kept "frosty-vps-" and border lines also silently
+        # dropped the header row (it contains neither), leaving a table
+        # with no column labels.
+        pm2 list 2>/dev/null
     else
         ls "${FROSTY_VPS_IMG_DIR}"/*.meta 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.meta$//' || echo "  No VMs found."
     fi
