@@ -7,6 +7,13 @@ install_vps_docker_stack() {
     echo ""
     echo "== Setting Up Docker-based VPS (no KVM available) =="
 
+    # If an earlier run happened under a different user, these log
+    # files can be left owned by that user — root can DELETE them (the
+    # /tmp sticky bit allows that) but not overwrite their content with
+    # a redirect, which silently breaks every "> logfile" below with
+    # "Permission denied". Clear them first so this can't recur.
+    rm -f /tmp/frosty_vps_docker_install.log /tmp/frosty_vps_dockerd.log           /tmp/frosty_vps_docker_pull.log /tmp/frosty_vps_docker_run.log           /tmp/frosty_vps_docker_ssh_setup.log 2>/dev/null
+
     if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
         echo "    Installing Docker..."
         curl -fsSL https://get.docker.com | sh >/tmp/frosty_vps_docker_install.log 2>&1
@@ -182,14 +189,25 @@ vps_docker_create() {
     local pubkey
     pubkey="$(cat "${FROSTY_VPS_DOCKER_DIR}/frosty_vps_key.pub" 2>/dev/null)"
 
-    # Check actual system-wide listening ports, not just other Docker
-    # containers' ports — the KVM/TCG VPS system (vps.sh) also claims
-    # host ports via QEMU hostfwd, and a Docker-only check had no way
-    # to see those, causing collisions between the two VPS systems.
-    local ssh_port=2200
-    while ss -ltn 2>/dev/null | grep -q ":${ssh_port} " || docker ps -a --format '{{.Ports}}' | grep -q ":${ssh_port}->"; do
-        ssh_port=$((ssh_port + 1))
+    # Pick a random port in a wide range and verify it's actually free,
+    # rather than counting up from a fixed start — with two independent
+    # VPS systems (this one and the KVM/TCG one in vps.sh) both claiming
+    # host ports, starting from the same low number every time made
+    # collisions likely. Checks actual system-wide listening ports, not
+    # just other Docker containers, since QEMU claims ports the same way.
+    local ssh_port=""
+    local port_attempts=0
+    while [[ -z "$ssh_port" && $port_attempts -lt 50 ]]; do
+        local candidate=$(( (RANDOM % 40000) + 20000 ))
+        if ! ss -ltn 2>/dev/null | grep -q ":${candidate} " &&            ! docker ps -a --format '{{.Ports}}' | grep -q ":${candidate}->"; then
+            ssh_port="$candidate"
+        fi
+        port_attempts=$((port_attempts + 1))
     done
+    if [[ -z "$ssh_port" ]]; then
+        _frosty_fail "Could not find a free port after 50 attempts"
+        return 1
+    fi
 
     echo "    Pulling image ${docker_img}..."
     docker pull "$docker_img" >/tmp/frosty_vps_docker_pull.log 2>&1
