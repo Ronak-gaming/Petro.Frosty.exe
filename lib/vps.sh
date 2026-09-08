@@ -320,10 +320,24 @@ vps_create() {
         return 1
     fi
 
-    local ssh_port=2200
-    while ss -ltn 2>/dev/null | grep -q ":${ssh_port} " || [[ -f "${FROSTY_VPS_IMG_DIR}/.port_${ssh_port}" ]]; do
-        ssh_port=$((ssh_port + 1))
+    # Pick a random port in a wide range and verify it's actually free,
+    # rather than counting up from a fixed start — with two independent
+    # VPS systems (this one and the Docker one) both claiming host
+    # ports, starting from the same low number every time made
+    # collisions likely.
+    local ssh_port=""
+    local port_attempts=0
+    while [[ -z "$ssh_port" && $port_attempts -lt 50 ]]; do
+        local candidate=$(( (RANDOM % 40000) + 20000 ))
+        if ! ss -ltn 2>/dev/null | grep -q ":${candidate} " &&            [[ ! -f "${FROSTY_VPS_IMG_DIR}/.port_${candidate}" ]]; then
+            ssh_port="$candidate"
+        fi
+        port_attempts=$((port_attempts + 1))
     done
+    if [[ -z "$ssh_port" ]]; then
+        _frosty_fail "Could not find a free port after 50 attempts"
+        return 1
+    fi
     touch "${FROSTY_VPS_IMG_DIR}/.port_${ssh_port}"
 
     read -rsp "  Set root password for the VM: " vm_pass
