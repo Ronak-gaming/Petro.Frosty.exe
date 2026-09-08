@@ -52,6 +52,14 @@ install_vps_stack() {
     echo ""
     echo "== Installing QEMU VPS Stack =="
 
+    # If an earlier run happened under a different user (e.g. before
+    # switching to root), these log files can be left owned by that
+    # user — root can still DELETE them (the /tmp sticky bit allows
+    # that) but can't overwrite their content with a redirect, which
+    # silently breaks every "> logfile" in this function with
+    # "Permission denied". Clear them first so this can't recur.
+    rm -f /tmp/frosty_vps_dpkg_fix.log /tmp/frosty_vps_apt.log           /tmp/frosty_vps_download.log /tmp/frosty_vps_disk.log           /tmp/frosty_vps_iso.log 2>/dev/null
+
     # A dpkg left interrupted by an earlier kill/restart (common in this
     # project's non-systemd environment) blocks EVERY apt operation
     # until repaired — fix it first rather than letting installs fail.
