@@ -1,25 +1,41 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
+# Prints each given line with a brief delay between them, for a
+# cascading "reveal" effect. Purely cosmetic — pass -e style strings
+# exactly as you would to echo -e. Skips the delay entirely if the
+# output isn't a real terminal (e.g. piped/logged), so it never slows
+# down non-interactive runs.
+_frosty_reveal() {
+    local delay=0.025
+    if [[ ! -t 1 ]]; then delay=0; fi
+    for line in "$@"; do
+        echo -e "$line"
+        [[ "$delay" != "0" ]] && sleep "$delay"
+    done
+}
+
 show_main_menu() {
     clear
     print_banner
-    echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}          ${C_ICE}${C_BOLD}❄  F R O S T Y . E X E  ❄${C_RESET}           ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Panels${C_RESET}                                   ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[2]${C_RESET} ${C_WHITE}Toolbox${C_RESET}                                  ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[3]${C_RESET} ${C_WHITE}VPS Installer${C_RESET}                            ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[4]${C_RESET} ${C_WHITE}Repair / Start All Services${C_RESET}              ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_RED}[5]${C_RESET} ${C_WHITE}Exit${C_RESET}                                     ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
+    _frosty_reveal \
+        "${C_FROST}${C_BOLD}╔❆════════════════════════════════════════════❆╗${C_RESET}" \
+        "${C_FROST}${C_BOLD}║${C_RESET}         ${C_ICE}${C_BOLD}🧊 F R O S T Y . E X E 🧊${C_RESET}           ${C_FROST}${C_BOLD}║${C_RESET}" \
+        "${C_FROST}${C_BOLD}║${C_RESET}      ${C_CYAN}· · · · · · your infra, frozen in ·  · · ·${C_RESET}    ${C_FROST}${C_BOLD}║${C_RESET}" \
+        "${C_FROST}${C_BOLD}╟────────────────────────────────────────────────╢${C_RESET}" \
+        "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}" \
+        "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}❯ [1]${C_RESET} ${C_WHITE}Panels${C_RESET}                                 ${C_FROST}${C_BOLD}║${C_RESET}" \
+        "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}❯ [2]${C_RESET} ${C_WHITE}Toolbox${C_RESET}                                ${C_FROST}${C_BOLD}║${C_RESET}" \
+        "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}❯ [3]${C_RESET} ${C_WHITE}VPS Installer${C_RESET}                          ${C_FROST}${C_BOLD}║${C_RESET}" \
+        "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}❯ [4]${C_RESET} ${C_WHITE}Repair / Start All Services${C_RESET}            ${C_FROST}${C_BOLD}║${C_RESET}" \
+        "${C_FROST}${C_BOLD}║${C_RESET}  ${C_RED}❯ [5]${C_RESET} ${C_WHITE}Exit${C_RESET}                                   ${C_FROST}${C_BOLD}║${C_RESET}" \
+        "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}" \
+        "${C_FROST}${C_BOLD}╚❆════════════════════════════════════════════❆╝${C_RESET}"
     echo ""
 
     local frosty_choice=""
     while [[ -z "$frosty_choice" ]]; do
-        read -rp "  Select an option [1-5]: " frosty_choice
+        read -rp "  ❄ Select an option [1-5]: " frosty_choice
     done
 
     case "$frosty_choice" in
@@ -27,7 +43,7 @@ show_main_menu() {
         2) load_module "toolbox.sh"; show_toolbox_menu ;;
         3) show_vps_type_menu ;;
         4) load_module "repair.sh"; repair_all_services ;;
-        5) echo -e "${C_CYAN}Goodbye.${C_RESET}"; exit 0 ;;
+        5) echo -e "${C_CYAN}❄ Goodbye.${C_RESET}"; exit 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 
@@ -40,16 +56,16 @@ show_vps_type_menu() {
     clear
     print_banner
     echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}        ${C_ICE}${C_BOLD}❄  V P S   I N S T A L L E R  ❄${C_RESET}        ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}      ${C_ICE}${C_BOLD}🧊 V P S   I N S T A L L E R 🧊${C_RESET}       ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}KVM VPS${C_RESET}                                  ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[2]${C_RESET} ${C_WHITE}Docker VPS${C_RESET}                               ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[3]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                        ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}❯ [1]${C_RESET} ${C_WHITE}KVM VPS${C_RESET}      ${C_ICE}(real VM, faster)${C_RESET}         ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}❯ [2]${C_RESET} ${C_WHITE}Docker VPS${C_RESET}   ${C_ICE}(no KVM needed)${C_RESET}           ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}❯ [3]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                      ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-3]: " vt_choice
+    read -rp "  ❄ Select an option [1-3]: " vt_choice
 
     case "$vt_choice" in
         1) load_module "vps.sh"; show_vps_kvm_menu ;;
@@ -63,15 +79,15 @@ show_panels_menu() {
     clear
     print_banner
     echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}              ${C_ICE}${C_BOLD}❄  P A N E L S  ❄${C_RESET}                 ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}             ${C_ICE}${C_BOLD}🧊 P A N E L S 🧊${C_RESET}                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Petro (Pterodactyl)${C_RESET}                      ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[2]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                        ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}❯ [1]${C_RESET} ${C_WHITE}Petro (Pterodactyl)${C_RESET}                    ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}❯ [2]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                      ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-2]: " panels_choice
+    read -rp "  ❄ Select an option [1-2]: " panels_choice
 
     case "$panels_choice" in
         1) show_pterodactyl_menu ;;
@@ -84,17 +100,17 @@ show_pterodactyl_menu() {
     clear
     print_banner
     echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}             ${C_ICE}${C_BOLD}❄  P E T R O  ❄${C_RESET}                   ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}              ${C_ICE}${C_BOLD}🧊 P E T R O 🧊${C_RESET}                 ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Panel${C_RESET}                                    ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[2]${C_RESET} ${C_WHITE}Wings${C_RESET}                                    ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[3]${C_RESET} ${C_WHITE}Themes & Extensions${C_RESET}                      ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[4]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                        ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}❯ [1]${C_RESET} ${C_WHITE}Panel${C_RESET}                                  ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}❯ [2]${C_RESET} ${C_WHITE}Wings${C_RESET}                                  ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}❯ [3]${C_RESET} ${C_WHITE}Themes & Extensions${C_RESET}                    ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}❯ [4]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                      ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-4]: " pty_choice
+    read -rp "  ❄ Select an option [1-4]: " pty_choice
 
     case "$pty_choice" in
         1) run_panel_flow ;;
@@ -181,7 +197,7 @@ run_panel_flow() {
         return 1
     fi
 
-    echo -e "${C_CYAN}Panel installation complete.${C_RESET}"
+    echo -e "${C_CYAN}❄ Panel installation complete.${C_RESET}"
 }
 
 run_wings_flow() {
@@ -237,7 +253,7 @@ run_wings_flow() {
         return 1
     fi
 
-    echo -e "${C_CYAN}Wings installation complete. Reachable at: https://${wings_fqdn}${C_RESET}"
+    echo -e "${C_CYAN}❄ Wings installation complete. Reachable at: https://${wings_fqdn}${C_RESET}"
 }
 
 run_cloudflare_flow() {
