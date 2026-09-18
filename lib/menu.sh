@@ -19,22 +19,22 @@ show_main_menu() {
     clear
     print_banner
     _frosty_reveal \
-        "${C_ICE}${C_BOLD}   ╭─❆────────────────────────────────────────────❆─╮${C_RESET}" \
-        "${C_ICE}${C_BOLD}   │${C_RESET}                                                    ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}   │${C_RESET}      ${C_CYAN}${C_BOLD}❄${C_RESET}  ${C_WHITE}${C_BOLD}F R O S T Y . E X E${C_RESET}  ${C_CYAN}${C_BOLD}❄${C_RESET}       ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}   │${C_RESET}   ${C_FROST}› all-in-one game server infrastructure ‹${C_RESET}   ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}   │${C_RESET}                                                    ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}   ├──────────────────────────────────────────────────┤${C_RESET}" \
-        "${C_ICE}${C_BOLD}   │${C_RESET}                                                    ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}   │${C_RESET}    ${C_CYAN}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}1${C_RESET}  ${C_WHITE}Panels${C_RESET}                                ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}   │${C_RESET}    ${C_PURPLE}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}2${C_RESET}  ${C_WHITE}Toolbox${C_RESET}                               ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}   │${C_RESET}    ${C_BLUE}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}3${C_RESET}  ${C_WHITE}VPS Installer${C_RESET}                        ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}   │${C_RESET}    ${C_ICE}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}4${C_RESET}  ${C_WHITE}Repair / Start All Services${C_RESET}          ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}   │${C_RESET}    ${C_RED}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}5${C_RESET}  ${C_WHITE}Exit${C_RESET}                                  ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}   │${C_RESET}                                                    ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}   ├──────────────────────────────────────────────────┤${C_RESET}" \
-        "${C_ICE}${C_BOLD}   │${C_RESET}  ${C_FROST}❆ Created and maintained by Ronak Gaming ❆${C_RESET}     ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}   ╰─❆────────────────────────────────────────────❆─╯${C_RESET}"
+        "${C_ICE}${C_BOLD}╭─❆────────────────────────────────────────────❆─╮${C_RESET}" \
+        "${C_ICE}${C_BOLD}│${C_RESET}                                                    ${C_ICE}${C_BOLD}│${C_RESET}" \
+        "${C_ICE}${C_BOLD}│${C_RESET}      ${C_CYAN}${C_BOLD}❄${C_RESET}  ${C_WHITE}${C_BOLD}F R O S T Y . E X E${C_RESET}  ${C_CYAN}${C_BOLD}❄${C_RESET}       ${C_ICE}${C_BOLD}│${C_RESET}" \
+        "${C_ICE}${C_BOLD}│${C_RESET}   ${C_FROST}› all-in-one game server infrastructure ‹${C_RESET}   ${C_ICE}${C_BOLD}│${C_RESET}" \
+        "${C_ICE}${C_BOLD}│${C_RESET}                                                    ${C_ICE}${C_BOLD}│${C_RESET}" \
+        "${C_ICE}${C_BOLD}├──────────────────────────────────────────────────┤${C_RESET}" \
+        "${C_ICE}${C_BOLD}│${C_RESET}                                                    ${C_ICE}${C_BOLD}│${C_RESET}" \
+        "${C_ICE}${C_BOLD}│${C_RESET}    ${C_CYAN}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}1${C_RESET}  ${C_WHITE}Panels${C_RESET}                                ${C_ICE}${C_BOLD}│${C_RESET}" \
+        "${C_ICE}${C_BOLD}│${C_RESET}    ${C_PURPLE}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}2${C_RESET}  ${C_WHITE}Toolbox${C_RESET}                               ${C_ICE}${C_BOLD}│${C_RESET}" \
+        "${C_ICE}${C_BOLD}│${C_RESET}    ${C_BLUE}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}3${C_RESET}  ${C_WHITE}VPS Installer${C_RESET}                        ${C_ICE}${C_BOLD}│${C_RESET}" \
+        "${C_ICE}${C_BOLD}│${C_RESET}    ${C_ICE}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}4${C_RESET}  ${C_WHITE}Repair / Start All Services${C_RESET}          ${C_ICE}${C_BOLD}│${C_RESET}" \
+        "${C_ICE}${C_BOLD}│${C_RESET}    ${C_RED}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}5${C_RESET}  ${C_WHITE}Exit${C_RESET}                                  ${C_ICE}${C_BOLD}│${C_RESET}" \
+        "${C_ICE}${C_BOLD}│${C_RESET}                                                    ${C_ICE}${C_BOLD}│${C_RESET}" \
+        "${C_ICE}${C_BOLD}├──────────────────────────────────────────────────┤${C_RESET}" \
+        "${C_ICE}${C_BOLD}│${C_RESET}  ${C_FROST}❆ Created and maintained by Ronak Gaming ❆${C_RESET}     ${C_ICE}${C_BOLD}│${C_RESET}" \
+        "${C_ICE}${C_BOLD}╰─❆────────────────────────────────────────────❆─╯${C_RESET}"
     echo ""
 
     local frosty_choice=""
