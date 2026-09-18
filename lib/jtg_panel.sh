@@ -11,6 +11,29 @@ set -uo pipefail
 
 FROSTY_JTG_DIR="/opt/jtg-panel"
 
+# Resolves a working pm2 command by absolute path where possible —
+# `command -v pm2` right after installing it can be unreliable across
+# shell contexts in this environment (same PATH inconsistency we hit
+# with Blueprint earlier), so check common install locations directly
+# instead of trusting bare `pm2` calls.
+_frosty_jtg_pm2_cmd() {
+    for candidate in \
+        "$(npm root -g 2>/dev/null)/pm2/bin/pm2" \
+        "/usr/local/lib/node_modules/pm2/bin/pm2" \
+        "/usr/lib/node_modules/pm2/bin/pm2"; do
+        if [[ -n "$candidate" && -f "$candidate" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    if command -v pm2 >/dev/null 2>&1; then
+        command -v pm2
+        return 0
+    fi
+    echo ""
+    return 1
+}
+
 jtg_panel_installed() {
     [[ -f "${FROSTY_JTG_DIR}/package.json" ]]
 }
@@ -41,10 +64,23 @@ install_jtg_panel() {
     _frosty_ok "Node.js: $(node -v)"
 
     load_module "pm2.sh"
-    if ! _frosty_ensure_pm2; then
-        _frosty_fail "pm2 setup failed — JTG Panel needs it to stay running persistently"
+    _frosty_ensure_pm2 >/dev/null 2>&1
+
+    # Verify pm2 is ACTUALLY usable, not just that the installer claimed
+    # success — resolve its real path directly rather than trusting PATH.
+    local pm2_bin
+    pm2_bin="$(_frosty_jtg_pm2_cmd)"
+    if [[ -z "$pm2_bin" ]]; then
+        echo "    pm2 not found — installing directly..."
+        npm install -g pm2 >/tmp/frosty_jtg_pm2_install.log 2>&1
+        hash -r
+        pm2_bin="$(_frosty_jtg_pm2_cmd)"
+    fi
+    if [[ -z "$pm2_bin" ]]; then
+        _frosty_fail "pm2 setup failed — JTG Panel needs it to stay running persistently. See /tmp/frosty_jtg_pm2_install.log"
         return 1
     fi
+    _frosty_ok "pm2 ready: $pm2_bin"
 
     echo "    Cloning JTG Panel..."
     rm -rf "$FROSTY_JTG_DIR"
@@ -85,23 +121,23 @@ install_jtg_panel() {
     npm run createuser
 
     echo "    Starting JTG Panel under pm2..."
-    pm2 delete jtg-panel >/dev/null 2>&1
+    "$pm2_bin" delete jtg-panel >/dev/null 2>&1
     if [[ -f ecosystem.config.cjs ]]; then
-        pm2 start ecosystem.config.cjs >/tmp/frosty_jtg_start.log 2>&1
+        "$pm2_bin" start ecosystem.config.cjs >/tmp/frosty_jtg_start.log 2>&1
     else
-        pm2 start "npm" --name "jtg-panel" -- run start >/tmp/frosty_jtg_start.log 2>&1
+        "$pm2_bin" start "npm" --name "jtg-panel" -- run start >/tmp/frosty_jtg_start.log 2>&1
     fi
-    pm2 save >/dev/null 2>&1
+    "$pm2_bin" save >/dev/null 2>&1
 
     sleep 3
-    if pm2 describe jtg-panel >/dev/null 2>&1 || pm2 list 2>/dev/null | grep -q "jtg"; then
+    if "$pm2_bin" describe jtg-panel >/dev/null 2>&1 || "$pm2_bin" list 2>/dev/null | grep -q "jtg"; then
         local display_ip="${FROSTY_PUBLIC_IP:-$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null)}"
         _frosty_ok "JTG Panel running"
         echo ""
         echo -e "    ${C_CYAN:-}Access it at:${C_RESET:-} http://${display_ip}:6767"
         echo -e "    ${C_YELLOW:-}Set up a Cloudflare Tunnel route (port 6767) or reverse proxy for HTTPS access.${C_RESET:-}"
     else
-        _frosty_fail "JTG Panel did not start — check: pm2 logs jtg-panel"
+        _frosty_fail "JTG Panel did not start — check: $pm2_bin logs jtg-panel (or: cat /tmp/frosty_jtg_start.log)"
         return 1
     fi
     return 0
@@ -122,9 +158,12 @@ show_jtg_panel_submenu() {
     echo ""
     read -rp "  ❄ Select an option [1-3]: " jtg_choice
 
+    load_module "pm2.sh"
+    local pm2_bin
+    pm2_bin="$(_frosty_jtg_pm2_cmd)"
     case "$jtg_choice" in
-        1) load_module "pm2.sh"; pm2 restart jtg-panel; _frosty_ok "Restarted" ;;
-        2) load_module "pm2.sh"; pm2 logs jtg-panel --lines 30 --nostream ;;
+        1) "$pm2_bin" restart jtg-panel; _frosty_ok "Restarted" ;;
+        2) "$pm2_bin" logs jtg-panel --lines 30 --nostream ;;
         3) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
