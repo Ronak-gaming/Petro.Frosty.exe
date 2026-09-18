@@ -30,7 +30,8 @@ show_main_menu() {
         "${C_ICE}${C_BOLD}│${C_RESET}    ${C_PURPLE}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}2${C_RESET}  ${C_WHITE}Toolbox${C_RESET}                               ${C_ICE}${C_BOLD}│${C_RESET}" \
         "${C_ICE}${C_BOLD}│${C_RESET}    ${C_BLUE}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}3${C_RESET}  ${C_WHITE}VPS Installer${C_RESET}                        ${C_ICE}${C_BOLD}│${C_RESET}" \
         "${C_ICE}${C_BOLD}│${C_RESET}    ${C_ICE}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}4${C_RESET}  ${C_WHITE}Repair / Start All Services${C_RESET}          ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}│${C_RESET}    ${C_RED}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}5${C_RESET}  ${C_WHITE}Exit${C_RESET}                                  ${C_ICE}${C_BOLD}│${C_RESET}" \
+        "${C_ICE}${C_BOLD}│${C_RESET}    ${C_PURPLE}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}5${C_RESET}  ${C_WHITE}Hypervisor${C_RESET}                           ${C_ICE}${C_BOLD}│${C_RESET}" \
+        "${C_ICE}${C_BOLD}│${C_RESET}    ${C_RED}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}6${C_RESET}  ${C_WHITE}Exit${C_RESET}                                  ${C_ICE}${C_BOLD}│${C_RESET}" \
         "${C_ICE}${C_BOLD}│${C_RESET}                                                    ${C_ICE}${C_BOLD}│${C_RESET}" \
         "${C_ICE}${C_BOLD}├──────────────────────────────────────────────────┤${C_RESET}" \
         "${C_ICE}${C_BOLD}│${C_RESET}  ${C_FROST}❆ Created and maintained by Ronak Gaming ❆${C_RESET}     ${C_ICE}${C_BOLD}│${C_RESET}" \
@@ -39,7 +40,7 @@ show_main_menu() {
 
     local frosty_choice=""
     while [[ -z "$frosty_choice" ]]; do
-        read -rp "  ❄ Select an option [1-5]: " frosty_choice
+        read -rp "  ❄ Select an option [1-6]: " frosty_choice
     done
 
     case "$frosty_choice" in
@@ -47,7 +48,8 @@ show_main_menu() {
         2) load_module "toolbox.sh"; show_toolbox_menu ;;
         3) show_vps_type_menu ;;
         4) load_module "repair.sh"; repair_all_services ;;
-        5) echo -e "${C_CYAN}❄ Goodbye.${C_RESET}"; exit 0 ;;
+        5) load_module "hypervisor.sh"; show_hypervisor_menu ;;
+        6) echo -e "${C_CYAN}❄ Goodbye.${C_RESET}"; exit 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 
@@ -75,6 +77,27 @@ show_vps_type_menu() {
         1) load_module "vps.sh"; show_vps_kvm_menu ;;
         2) load_module "vps_docker.sh"; show_vps_docker_menu ;;
         3) return 0 ;;
+        *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
+    esac
+}
+
+show_hypervisor_menu() {
+    clear
+    print_banner
+    echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}          ${C_ICE}${C_BOLD}❄  H Y P E R V I S O R  ❄${C_RESET}           ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Proxmox VE${C_RESET}                               ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[2]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                        ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
+    echo ""
+    read -rp "  ❄ Select an option [1-2]: " hv_choice
+
+    case "$hv_choice" in
+        1) show_proxmox_menu ;;
+        2) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 }
