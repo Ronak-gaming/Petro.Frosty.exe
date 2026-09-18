@@ -19,18 +19,18 @@ show_main_menu() {
     clear
     print_banner
     _frosty_reveal \
-        "${C_FROST}${C_BOLD}╔❆════════════════════════════════════════════❆╗${C_RESET}" \
-        "${C_FROST}${C_BOLD}║${C_RESET}         ${C_ICE}${C_BOLD}🧊 F R O S T Y . E X E 🧊${C_RESET}           ${C_FROST}${C_BOLD}║${C_RESET}" \
-        "${C_FROST}${C_BOLD}║${C_RESET}      ${C_CYAN}· · · · · · your infra, frozen in ·  · · ·${C_RESET}    ${C_FROST}${C_BOLD}║${C_RESET}" \
-        "${C_FROST}${C_BOLD}╟────────────────────────────────────────────────╢${C_RESET}" \
-        "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}" \
-        "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}❯ [1]${C_RESET} ${C_WHITE}Panels${C_RESET}                                 ${C_FROST}${C_BOLD}║${C_RESET}" \
-        "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}❯ [2]${C_RESET} ${C_WHITE}Toolbox${C_RESET}                                ${C_FROST}${C_BOLD}║${C_RESET}" \
-        "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}❯ [3]${C_RESET} ${C_WHITE}VPS Installer${C_RESET}                          ${C_FROST}${C_BOLD}║${C_RESET}" \
-        "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}❯ [4]${C_RESET} ${C_WHITE}Repair / Start All Services${C_RESET}            ${C_FROST}${C_BOLD}║${C_RESET}" \
-        "${C_FROST}${C_BOLD}║${C_RESET}  ${C_RED}❯ [5]${C_RESET} ${C_WHITE}Exit${C_RESET}                                   ${C_FROST}${C_BOLD}║${C_RESET}" \
-        "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}" \
-        "${C_FROST}${C_BOLD}╚❆════════════════════════════════════════════❆╝${C_RESET}"
+        "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════════╗${C_RESET}" \
+        "${C_FROST}${C_BOLD}║${C_RESET}${C_ICE}${C_BOLD}         ❄  F R O S T Y . E X E  ❄                ${C_RESET}${C_FROST}${C_BOLD}║${C_RESET}" \
+        "${C_FROST}${C_BOLD}║${C_RESET}${C_CYAN}        infra, frozen in seconds                  ${C_RESET}${C_FROST}${C_BOLD}║${C_RESET}" \
+        "${C_FROST}${C_BOLD}╟──────────────────────────────────────────────────╢${C_RESET}" \
+        "${C_FROST}${C_BOLD}║${C_RESET}                                                  ${C_FROST}${C_BOLD}║${C_RESET}" \
+        "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}❯ [1]${C_RESET} ${C_WHITE}Panels${C_RESET}                                    ${C_FROST}${C_BOLD}║${C_RESET}" \
+        "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}❯ [2]${C_RESET} ${C_WHITE}Toolbox${C_RESET}                                   ${C_FROST}${C_BOLD}║${C_RESET}" \
+        "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}❯ [3]${C_RESET} ${C_WHITE}VPS Installer${C_RESET}                             ${C_FROST}${C_BOLD}║${C_RESET}" \
+        "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}❯ [4]${C_RESET} ${C_WHITE}Repair / Start All Services${C_RESET}               ${C_FROST}${C_BOLD}║${C_RESET}" \
+        "${C_FROST}${C_BOLD}║${C_RESET}  ${C_RED}❯ [5]${C_RESET} ${C_WHITE}Exit${C_RESET}                                      ${C_FROST}${C_BOLD}║${C_RESET}" \
+        "${C_FROST}${C_BOLD}║${C_RESET}                                                  ${C_FROST}${C_BOLD}║${C_RESET}" \
+        "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════════╝${C_RESET}"
     echo ""
 
     local frosty_choice=""
