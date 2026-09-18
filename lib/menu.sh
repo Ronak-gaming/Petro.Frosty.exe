@@ -48,7 +48,11 @@ show_main_menu() {
         2) load_module "toolbox.sh"; show_toolbox_menu ;;
         3) show_vps_type_menu ;;
         4) load_module "repair.sh"; repair_all_services ;;
-        5) load_module "hypervisor.sh"; show_hypervisor_menu ;;
+        5)
+            echo ""
+            echo -e "${C_ICE}${C_BOLD}❄ Hypervisor support is coming soon.${C_RESET}"
+            echo -e "${C_YELLOW}Not available yet — check back in a future update.${C_RESET}"
+            ;;
         6) echo -e "${C_CYAN}❄ Goodbye.${C_RESET}"; exit 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
@@ -97,7 +101,7 @@ show_hypervisor_menu() {
 
     case "$hv_choice" in
         1) show_proxmox_menu ;;
-        2) return 0 ;;
+        3) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 }
@@ -110,15 +114,17 @@ show_panels_menu() {
     echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}❯ [1]${C_RESET} ${C_WHITE}Petro (Pterodactyl)${C_RESET}                    ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}❯ [2]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                      ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}❯ [2]${C_RESET} ${C_WHITE}JTG Panel${C_RESET}                              ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}❯ [3]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                      ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  ❄ Select an option [1-2]: " panels_choice
+    read -rp "  ❄ Select an option [1-3]: " panels_choice
 
     case "$panels_choice" in
         1) show_pterodactyl_menu ;;
-        2) return 0 ;;
+        2) load_module "jtg_panel.sh"; run_jtg_panel_flow ;;
+        3) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 }
