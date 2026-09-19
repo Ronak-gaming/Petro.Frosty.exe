@@ -43,6 +43,34 @@ install_vps_docker_stack() {
     fi
     _frosty_ok "Docker available"
 
+    # A container can get an IP but still have ZERO real network access
+    # (0 KB/s, apt update hangs forever) if either of these is wrong on
+    # the HOST — Docker itself can't fix this from inside the container:
+    #   1. IP forwarding disabled — the kernel simply won't route
+    #      container traffic out to the internet at all.
+    #   2. Docker's NAT/MASQUERADE iptables rule never got programmed,
+    #      which happens if Docker started before iptables was ready.
+    # Fixing both here so every container gets working network by default.
+    echo "    Verifying container networking (IP forwarding + NAT)..."
+    if [[ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" != "1" ]]; then
+        sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1
+        if ! grep -q "^net.ipv4.ip_forward" /etc/sysctl.conf 2>/dev/null; then
+            echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
+        fi
+        _frosty_ok "Enabled IP forwarding (was disabled — this alone can cause 0 KB/s in containers)"
+    fi
+    if ! iptables -t nat -C POSTROUTING -s 172.17.0.0/16 ! -o docker0 -j MASQUERADE >/dev/null 2>&1; then
+        _frosty_warn "Docker's NAT rule looks missing — restarting Docker to reprogram it"
+        if [[ -d /run/systemd/system ]]; then
+            systemctl restart docker >/dev/null 2>&1
+        else
+            pkill -x dockerd >/dev/null 2>&1
+            sleep 1
+            dockerd >/tmp/frosty_vps_dockerd.log 2>&1 &
+            sleep 5
+        fi
+    fi
+
     mkdir -p "$FROSTY_VPS_DOCKER_DIR"
 
     if [[ ! -f "${FROSTY_VPS_DOCKER_DIR}/frosty_vps_key" ]]; then
