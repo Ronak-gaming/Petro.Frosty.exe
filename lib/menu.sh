@@ -80,7 +80,7 @@ show_vps_type_menu() {
     case "$vt_choice" in
         1) load_module "vps.sh"; show_vps_kvm_menu ;;
         2) load_module "vps_docker.sh"; show_vps_docker_menu ;;
-        3) return 0 ;;
+        4) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 }
@@ -110,21 +110,23 @@ show_panels_menu() {
     clear
     print_banner
     echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}             ${C_ICE}${C_BOLD}🧊 P A N E L S 🧊${C_RESET}                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}         ${C_ICE}${C_BOLD}🧊 P A N E L   &   B O T 🧊${C_RESET}         ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}❯ [1]${C_RESET} ${C_WHITE}Petro (Pterodactyl)${C_RESET}                    ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}❯ [2]${C_RESET} ${C_WHITE}JTG Panel${C_RESET}                              ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}❯ [3]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                      ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}❯ [3]${C_RESET} ${C_WHITE}VPS Bot${C_RESET}                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}❯ [4]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                      ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  ❄ Select an option [1-3]: " panels_choice
+    read -rp "  ❄ Select an option [1-4]: " panels_choice
 
     case "$panels_choice" in
         1) show_pterodactyl_menu ;;
         2) load_module "jtg_panel.sh"; run_jtg_panel_flow ;;
-        3) return 0 ;;
+        3) load_module "vps_bot.sh"; run_vps_bot_flow ;;
+        4) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 }
