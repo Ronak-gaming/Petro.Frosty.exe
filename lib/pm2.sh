@@ -37,6 +37,13 @@ _frosty_ensure_pm2() {
     if [[ -d /run/systemd/system ]]; then
         return 0
     fi
+    _frosty_ensure_pm2_always
+}
+
+# Same as above but WITHOUT the systemd skip — for tools like the VPS
+# Bot and JTG Panel that have no systemd-unit alternative and always
+# need pm2 to run persistently, on any host.
+_frosty_ensure_pm2_always() {
 
     if [[ -n "$(_frosty_pm2_bin)" ]]; then
         _frosty_ok "pm2 already installed: $("$(_frosty_pm2_bin)" -v 2>/dev/null)"
