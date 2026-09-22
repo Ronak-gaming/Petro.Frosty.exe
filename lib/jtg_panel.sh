@@ -64,7 +64,7 @@ install_jtg_panel() {
     _frosty_ok "Node.js: $(node -v)"
 
     load_module "pm2.sh"
-    _frosty_ensure_pm2 >/dev/null 2>&1
+    _frosty_ensure_pm2_always >/dev/null 2>&1
 
     # Verify pm2 is ACTUALLY usable, not just that the installer claimed
     # success — resolve its real path directly rather than trusting PATH.
@@ -143,6 +143,84 @@ install_jtg_panel() {
     return 0
 }
 
+update_jtg_panel() {
+    echo ""
+    echo -e "${C_CYAN:-}== Updating JTG Panel ==${C_RESET:-}"
+    if [[ ! -d "$FROSTY_JTG_DIR" ]]; then
+        _frosty_fail "JTG Panel isn't installed yet — use Install Panel first"
+        return 1
+    fi
+    cd "$FROSTY_JTG_DIR" || return 1
+
+    local pm2_bin
+    pm2_bin="$(_frosty_jtg_pm2_cmd)"
+
+    echo "    Pulling latest changes..."
+    if ! timeout 60 git pull >/tmp/frosty_jtg_update.log 2>&1; then
+        _frosty_fail "git pull failed — see /tmp/frosty_jtg_update.log"
+        return 1
+    fi
+
+    echo "    Installing any new dependencies..."
+    if ! timeout 600 npm install >>/tmp/frosty_jtg_update.log 2>&1; then
+        _frosty_fail "npm install failed — see /tmp/frosty_jtg_update.log"
+        return 1
+    fi
+
+    echo "    Rebuilding..."
+    if ! timeout 300 npm run build >>/tmp/frosty_jtg_update.log 2>&1; then
+        _frosty_fail "Build failed — see /tmp/frosty_jtg_update.log"
+        return 1
+    fi
+
+    if [[ -n "$pm2_bin" ]]; then
+        "$pm2_bin" restart jtg-panel >/dev/null 2>&1
+        if "$pm2_bin" describe jtg-panel 2>/dev/null | grep -q "online"; then
+            _frosty_ok "Updated and restarted"
+        else
+            _frosty_warn "Updated, but restart didn't confirm online — check: $pm2_bin logs jtg-panel"
+        fi
+    else
+        _frosty_warn "Updated files, but pm2 wasn't found to restart it — restart manually"
+    fi
+}
+
+create_jtg_admin_user() {
+    echo ""
+    echo -e "${C_CYAN:-}== Create Admin User ==${C_RESET:-}"
+    if [[ ! -d "$FROSTY_JTG_DIR" ]]; then
+        _frosty_fail "JTG Panel isn't installed yet — use Install Panel first"
+        return 1
+    fi
+    cd "$FROSTY_JTG_DIR" || return 1
+    echo -e "${C_YELLOW:-}This step is interactive — follow the prompts below.${C_RESET:-}"
+    npm run createuser
+}
+
+restart_jtg_panel() {
+    echo ""
+    local pm2_bin
+    pm2_bin="$(_frosty_jtg_pm2_cmd)"
+    if [[ -z "$pm2_bin" ]]; then
+        _frosty_fail "pm2 not found — cannot restart"
+        return 1
+    fi
+
+    "$pm2_bin" restart jtg-panel >/tmp/frosty_jtg_restart.log 2>&1
+    local rc=$?
+
+    # Don't trust the exit code alone either — confirm the process is
+    # actually reporting "online" before calling this a success.
+    sleep 1
+    if [[ $rc -eq 0 ]] && "$pm2_bin" describe jtg-panel 2>/dev/null | grep -q "online"; then
+        _frosty_ok "Restarted"
+    else
+        _frosty_fail "Restart failed or process not found — see /tmp/frosty_jtg_restart.log"
+        _frosty_warn "If it was never started, use Install Panel first."
+        return 1
+    fi
+}
+
 show_jtg_panel_submenu() {
     clear
     print_banner
@@ -150,21 +228,27 @@ show_jtg_panel_submenu() {
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}           ${C_ICE}${C_BOLD}❄  J T G   P A N E L  ❄${C_RESET}            ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Restart${C_RESET}                                  ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[2]${C_RESET} ${C_WHITE}View Logs${C_RESET}                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[3]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                        ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Install Panel${C_RESET}                            ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[2]${C_RESET} ${C_WHITE}Update Panel${C_RESET}                             ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[3]${C_RESET} ${C_WHITE}Create Admin User${C_RESET}                        ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_GREEN}[4]${C_RESET} ${C_WHITE}Restart Panel${C_RESET}                            ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[5]${C_RESET} ${C_WHITE}View Logs${C_RESET}                                ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_RED}[6]${C_RESET} ${C_WHITE}Exit / Back to Main Menu${C_RESET}                 ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  ❄ Select an option [1-3]: " jtg_choice
+    read -rp "  ❄ Select an option [1-6]: " jtg_choice
 
     load_module "pm2.sh"
     local pm2_bin
     pm2_bin="$(_frosty_jtg_pm2_cmd)"
     case "$jtg_choice" in
-        1) "$pm2_bin" restart jtg-panel; _frosty_ok "Restarted" ;;
-        2) "$pm2_bin" logs jtg-panel --lines 30 --nostream ;;
-        3) return 0 ;;
+        1) install_jtg_panel ;;
+        2) update_jtg_panel ;;
+        3) create_jtg_admin_user ;;
+        4) restart_jtg_panel ;;
+        5) [[ -n "$pm2_bin" ]] && "$pm2_bin" logs jtg-panel --lines 30 --nostream || _frosty_fail "pm2 not found" ;;
+        6) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
     echo ""
@@ -172,9 +256,5 @@ show_jtg_panel_submenu() {
 }
 
 run_jtg_panel_flow() {
-    if jtg_panel_installed; then
-        show_jtg_panel_submenu
-        return 0
-    fi
-    install_jtg_panel
+    show_jtg_panel_submenu
 }
