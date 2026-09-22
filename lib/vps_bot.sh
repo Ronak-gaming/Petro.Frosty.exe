@@ -103,7 +103,7 @@ STARTEOF
 
     echo "    Starting the bot under pm2..."
     load_module "pm2.sh"
-    if ! _frosty_ensure_pm2; then
+    if ! _frosty_ensure_pm2_always; then
         _frosty_fail "pm2 setup failed — cannot start the bot persistently"
         return 1
     fi
