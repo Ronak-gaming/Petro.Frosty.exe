@@ -26,7 +26,7 @@ show_main_menu() {
         "${C_ICE}${C_BOLD}│${C_RESET}                                                    ${C_ICE}${C_BOLD}│${C_RESET}" \
         "${C_ICE}${C_BOLD}├──────────────────────────────────────────────────┤${C_RESET}" \
         "${C_ICE}${C_BOLD}│${C_RESET}                                                    ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}│${C_RESET}    ${C_CYAN}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}1${C_RESET}  ${C_WHITE}Panels${C_RESET}                                ${C_ICE}${C_BOLD}│${C_RESET}" \
+        "${C_ICE}${C_BOLD}│${C_RESET}    ${C_CYAN}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}1${C_RESET}  ${C_WHITE}Panels & VPS Bot${C_RESET}                      ${C_ICE}${C_BOLD}│${C_RESET}" \
         "${C_ICE}${C_BOLD}│${C_RESET}    ${C_PURPLE}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}2${C_RESET}  ${C_WHITE}Toolbox${C_RESET}                               ${C_ICE}${C_BOLD}│${C_RESET}" \
         "${C_ICE}${C_BOLD}│${C_RESET}    ${C_BLUE}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}3${C_RESET}  ${C_WHITE}VPS Installer${C_RESET}                        ${C_ICE}${C_BOLD}│${C_RESET}" \
         "${C_ICE}${C_BOLD}│${C_RESET}    ${C_ICE}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}4${C_RESET}  ${C_WHITE}Repair / Start All Services${C_RESET}          ${C_ICE}${C_BOLD}│${C_RESET}" \
@@ -110,7 +110,7 @@ show_panels_menu() {
     clear
     print_banner
     echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}         ${C_ICE}${C_BOLD}🧊 P A N E L   &   B O T 🧊${C_RESET}         ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}     ${C_ICE}${C_BOLD}🧊 P A N E L S   &   V P S   B O T 🧊${C_RESET}     ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}❯ [1]${C_RESET} ${C_WHITE}Petro (Pterodactyl)${C_RESET}                    ${C_FROST}${C_BOLD}║${C_RESET}"
