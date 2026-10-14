@@ -28,28 +28,48 @@ FROSTY_PHP_REQUIRED_EXT=(
 )
 
 _frosty_add_php_ppa() {
-    echo "    Adding PHP repository (ppa:ondrej/php)..."
+    echo "    Adding PHP repository..."
 
     if ! dpkg -s software-properties-common >/dev/null 2>&1; then
-        DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common >/tmp/frosty_php_ppa.log 2>&1
+        DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common ca-certificates lsb-release apt-transport-https curl >/tmp/frosty_php_ppa.log 2>&1
     fi
 
-    if grep -rq "ondrej/php" /etc/apt/sources.list.d/ 2>/dev/null; then
-        _frosty_ok "PHP PPA already added"
-        return 0
+    local os_id="${FROSTY_OS_ID:-}"
+    if [[ -z "$os_id" && -f /etc/os-release ]]; then
+        os_id="$(. /etc/os-release && echo "${ID:-ubuntu}")"
     fi
 
-    if LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php >>/tmp/frosty_php_ppa.log 2>&1; then
-        _frosty_ok "PHP PPA added"
+    if [[ "$os_id" == "debian" ]]; then
+        if grep -rq "packages.sury.org/php" /etc/apt/sources.list.d/ 2>/dev/null; then
+            _frosty_ok "Sury PHP repository already added (Debian)"
+        else
+            mkdir -p /etc/apt/trusted.gpg.d
+            if curl -fsSL https://packages.sury.org/php/apt.gpg -o /etc/apt/trusted.gpg.d/php.gpg >>/tmp/frosty_php_ppa.log 2>&1; then
+                echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" > /etc/apt/sources.list.d/php.list
+                _frosty_ok "Sury PHP repository added (Debian)"
+            else
+                _frosty_fail "Failed to add Sury PHP repository — see /tmp/frosty_php_ppa.log"
+                return 1
+            fi
+        fi
     else
-        _frosty_fail "Failed to add PHP PPA — see /tmp/frosty_php_ppa.log"
-        return 1
+        if grep -rq "ondrej/php" /etc/apt/sources.list.d/ 2>/dev/null; then
+            _frosty_ok "PHP PPA already added (Ubuntu)"
+            return 0
+        fi
+
+        if LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php >>/tmp/frosty_php_ppa.log 2>&1; then
+            _frosty_ok "PHP PPA added (Ubuntu)"
+        else
+            _frosty_fail "Failed to add PHP PPA — see /tmp/frosty_php_ppa.log"
+            return 1
+        fi
     fi
 
     if DEBIAN_FRONTEND=noninteractive apt-get update -y >>/tmp/frosty_php_ppa.log 2>&1; then
         return 0
     else
-        _frosty_fail "apt-get update after adding PPA failed — see /tmp/frosty_php_ppa.log"
+        _frosty_fail "apt-get update after adding PHP repository failed — see /tmp/frosty_php_ppa.log"
         return 1
     fi
 }
@@ -98,9 +118,6 @@ install_php() {
             _frosty_warn "No systemd — starting php-fpm${FROSTY_PHP_VERSION} under pm2 for persistence"
             mkdir -p /run/php
 
-            # Kill any orphaned master first — pm2 will manage the new one,
-            # and a stale foreground/background instance would fight it
-            # for the same socket file.
             if pgrep -f "$fpm_pattern" >/dev/null 2>&1; then
                 _frosty_warn "Found existing php-fpm${FROSTY_PHP_VERSION} master process(es) — stopping before restart"
                 pkill -f "$fpm_pattern" 2>/dev/null
@@ -117,9 +134,6 @@ install_php() {
                 _frosty_fail "pm2 setup failed — cannot start php-fpm persistently"
                 return 1
             fi
-            # -F = stay in foreground, required for pm2 to supervise it
-            # (the normal -D daemon flag forks and exits immediately,
-            # which pm2 would just see as an instant crash-loop).
             if ! _frosty_pm2_start "php-fpm" "/" "php-fpm${FROSTY_PHP_VERSION}" "-F"; then
                 echo "    -- config test (php-fpm${FROSTY_PHP_VERSION} -t) --"
                 "php-fpm${FROSTY_PHP_VERSION}" -t 2>&1 | sed 's/^/    /'
