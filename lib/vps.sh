@@ -52,17 +52,10 @@ install_vps_stack() {
     echo ""
     echo "== Installing QEMU VPS Stack =="
 
-    # If an earlier run happened under a different user (e.g. before
-    # switching to root), these log files can be left owned by that
-    # user — root can still DELETE them (the /tmp sticky bit allows
-    # that) but can't overwrite their content with a redirect, which
-    # silently breaks every "> logfile" in this function with
-    # "Permission denied". Clear them first so this can't recur.
-    rm -f /tmp/frosty_vps_dpkg_fix.log /tmp/frosty_vps_apt.log           /tmp/frosty_vps_download.log /tmp/frosty_vps_disk.log           /tmp/frosty_vps_iso.log 2>/dev/null
+    rm -f /tmp/frosty_vps_dpkg_fix.log /tmp/frosty_vps_apt.log \
+          /tmp/frosty_vps_download.log /tmp/frosty_vps_disk.log \
+          /tmp/frosty_vps_iso.log 2>/dev/null
 
-    # A dpkg left interrupted by an earlier kill/restart (common in this
-    # project's non-systemd environment) blocks EVERY apt operation
-    # until repaired — fix it first rather than letting installs fail.
     dpkg --configure -a >/tmp/frosty_vps_dpkg_fix.log 2>&1
 
     local kvm_usable
@@ -75,7 +68,7 @@ install_vps_stack() {
         echo "  No hardware virtualization available. Choose how to proceed:"
         echo "  [1] Continue anyway with software emulation (TCG) — slower, but a real isolated VM"
         echo "  [2] Switch to Docker VPS instead — near-native speed, but shares the host kernel (less isolated)"
-        read -rp "  Choice [1-2]: " kvm_fallback_choice
+        read -erp "  Choice [1-2]: " kvm_fallback_choice
 
         if [[ "$kvm_fallback_choice" == "2" ]]; then
             echo ""
@@ -120,8 +113,6 @@ install_vps_stack() {
         _frosty_ok "QEMU stack already installed"
     fi
 
-    # Keep the /dev/kvm permission fix persistent via udev, same as
-    # before — harmless if KVM isn't present at all.
     if [[ ! -f /etc/udev/rules.d/99-frosty-kvm.rules ]]; then
         echo 'KERNEL=="kvm", MODE="0666"' > /etc/udev/rules.d/99-frosty-kvm.rules
         udevadm control --reload-rules >/dev/null 2>&1
@@ -159,9 +150,6 @@ _frosty_vps_image_url() {
     esac
 }
 
-# Every VM is always reached via 127.0.0.1 on its own assigned port —
-# there's no guest IP to track anymore since networking is host-side
-# port mapping, not a real network interface.
 _frosty_vps_sshport() {
     grep '^ssh_port=' "${FROSTY_VPS_IMG_DIR}/$1.meta" 2>/dev/null | cut -d= -f2
 }
@@ -179,14 +167,13 @@ vps_kvm_exists_any() {
 }
 
 show_vps_kvm_menu() {
-    clear
-    print_banner
-
     if vps_kvm_exists_any; then
         show_vps_kvm_full_menu
         return 0
     fi
 
+    clear
+    print_banner
     echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}            ${C_ICE}${C_BOLD}❄  K V M   V P S  ❄${C_RESET}                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
@@ -196,7 +183,7 @@ show_vps_kvm_menu() {
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-2]: " gate_choice
+    read -erp "  Select an option [1-2]: " gate_choice
 
     case "$gate_choice" in
         1)
@@ -223,10 +210,6 @@ show_vps_kvm_menu() {
     show_vps_kvm_menu
 }
 
-# Builds the full QEMU command as an array and starts it under pm2.
-# Reads everything it needs from the VM's .meta file, so restarting a
-# VM later (after an edit, or after a host reboot) reproduces the
-# exact same launch config without asking anything again.
 _frosty_vps_launch() {
     local vm_name="$1"
     local img_key vm_ram vm_cpu ssh_port port_forwards
@@ -235,6 +218,15 @@ _frosty_vps_launch() {
     vm_cpu="$(_frosty_vps_meta_get "$vm_name" vm_cpu)"
     ssh_port="$(_frosty_vps_meta_get "$vm_name" ssh_port)"
     port_forwards="$(_frosty_vps_meta_get "$vm_name" port_forwards)"
+
+    # Guard against corrupted/oversized vm_ram in .meta file
+    local host_avail_mb
+    host_avail_mb="$(free -m | awk '/^Mem:/{print $7}')"
+    if [[ -n "$host_avail_mb" && -n "$vm_ram" && "$vm_ram" -ge "$host_avail_mb" ]]; then
+        _frosty_fail "VM '$vm_name' is configured for ${vm_ram} MB RAM, which exceeds available host memory (${host_avail_mb} MB)."
+        _frosty_warn "Use option [6] Edit VPS Config -> Change RAM to set a valid amount (e.g. 32768)."
+        return 1
+    fi
 
     local vm_disk_path="${FROSTY_VPS_IMG_DIR}/${vm_name}.qcow2"
     local seed_iso="${FROSTY_VPS_IMG_DIR}/${vm_name}-seed.iso"
@@ -281,7 +273,8 @@ vps_create() {
     echo ""
     echo -e "${C_CYAN:-}== Create New VPS ==${C_RESET:-}"
     echo ""
-    read -rp "  VM name (e.g. client1-vps): " vm_name
+    read -erp "  VM name (e.g. client1-vps): " vm_name
+    vm_name="$(echo "$vm_name" | tr -cd 'A-Za-z0-9_-')"
     [[ -z "$vm_name" ]] && { _frosty_fail "Name required"; return 1; }
 
     if [[ -f "${FROSTY_VPS_IMG_DIR}/${vm_name}.meta" ]]; then
@@ -291,7 +284,7 @@ vps_create() {
 
     echo "  Image: [1] Ubuntu 26.04 LTS (latest)  [2] Ubuntu 24.04 LTS  [3] Ubuntu 22.04 LTS"
     echo "         [4] Debian 11  [5] Debian 12  [6] Debian 13 (latest)"
-    read -rp "  Choice [1-6]: " img_choice
+    read -erp "  Choice [1-6]: " img_choice
     case "$img_choice" in
         1) img_key="ubuntu2604" ;;
         2) img_key="ubuntu2404" ;;
@@ -306,38 +299,42 @@ vps_create() {
 
     echo "  Resource preset: [1] Small (1 vCPU/1GB/10GB)  [2] Medium (2 vCPU/2GB/20GB)"
     echo "                   [3] Large (4 vCPU/4GB/40GB)  [4] Custom"
-    read -rp "  Choice [1-4]: " preset_choice
+    read -erp "  Choice [1-4]: " preset_choice
     case "$preset_choice" in
         1) vm_cpu=1; vm_ram=1024; vm_disk=10 ;;
         2) vm_cpu=2; vm_ram=2048; vm_disk=20 ;;
         3) vm_cpu=4; vm_ram=4096; vm_disk=40 ;;
         4)
-            read -rp "  RAM in MB: " vm_ram
-            read -rp "  vCPUs: " vm_cpu
-            read -rp "  Disk size in GB (number only, e.g. 20): " vm_disk
+            read -erp "  RAM in MB (e.g. 32768): " vm_ram
+            read -erp "  vCPUs (e.g. 8): " vm_cpu
+            read -erp "  Disk size in GB (number only, e.g. 30): " vm_disk
             ;;
         *) _frosty_fail "Invalid preset choice"; return 1 ;;
     esac
 
-    vm_ram="$(echo "$vm_ram" | tr -cd '0-9')"
-    vm_cpu="$(echo "$vm_cpu" | tr -cd '0-9')"
-    vm_disk="$(echo "$vm_disk" | tr -cd '0-9')"
+    # Strip spaces only; reject non-digit strings rather than concatenating escape codes
+    vm_ram="${vm_ram//[[:space:]]/}"
+    vm_cpu="${vm_cpu//[[:space:]]/}"
+    vm_disk="${vm_disk//[[:space:]]/}"
 
-    if [[ -z "$vm_ram" || -z "$vm_cpu" || -z "$vm_disk" ]]; then
-        _frosty_fail "RAM, vCPU, and disk size must be numbers"
+    if [[ ! "$vm_ram" =~ ^[0-9]+$ || ! "$vm_cpu" =~ ^[0-9]+$ || ! "$vm_disk" =~ ^[0-9]+$ ]]; then
+        _frosty_fail "RAM, vCPU, and disk size must be plain numbers (got RAM='${vm_ram}', vCPU='${vm_cpu}', Disk='${vm_disk}')"
         return 1
     fi
 
-    # Pick a random port in a wide range and verify it's actually free,
-    # rather than counting up from a fixed start — with two independent
-    # VPS systems (this one and the Docker one) both claiming host
-    # ports, starting from the same low number every time made
-    # collisions likely.
+    local host_avail_mb
+    host_avail_mb="$(free -m | awk '/^Mem:/{print $7}')"
+    if [[ -n "$host_avail_mb" && "$vm_ram" -ge "$host_avail_mb" ]]; then
+        _frosty_fail "Requested RAM (${vm_ram} MB) exceeds available host memory (${host_avail_mb} MB)"
+        return 1
+    fi
+
     local ssh_port=""
     local port_attempts=0
     while [[ -z "$ssh_port" && $port_attempts -lt 50 ]]; do
         local candidate=$(( (RANDOM % 40000) + 20000 ))
-        if ! ss -ltn 2>/dev/null | grep -q ":${candidate} " &&            [[ ! -f "${FROSTY_VPS_IMG_DIR}/.port_${candidate}" ]]; then
+        if ! ss -ltn 2>/dev/null | grep -q ":${candidate} " && \
+           [[ ! -f "${FROSTY_VPS_IMG_DIR}/.port_${candidate}" ]]; then
             ssh_port="$candidate"
         fi
         port_attempts=$((port_attempts + 1))
@@ -395,7 +392,7 @@ chpasswd:
   expire: false
 runcmd:
   - sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
-  - systemctl restart sshd
+  - systemctl restart sshd || service ssh restart
 CIEOF
     cat > "${cloud_dir}/meta-data" << CIEOF
 instance-id: ${vm_name}
@@ -466,7 +463,7 @@ METAEOF
     echo "      ssh -i ${FROSTY_VPS_DIR}/frosty_vps_key -p ${ssh_port} root@${display_ip}"
     echo ""
     echo "  Share this VM now? [1] tmate  [2] sshx  [3] Live Terminal (local)  [4] Skip"
-    read -rp "  Choice [1-4]: " share_now
+    read -erp "  Choice [1-4]: " share_now
     case "$share_now" in
         1) vps_share_tmate <<< "$vm_name" ;;
         2) vps_share_sshx <<< "$vm_name" ;;
@@ -483,10 +480,6 @@ vps_list() {
     _frosty_vps_check_stack || return 1
     load_module "pm2.sh"
     if command -v pm2 >/dev/null 2>&1; then
-        # Show pm2's full table rather than grep-filtering it — a filter
-        # that only kept "frosty-vps-" and border lines also silently
-        # dropped the header row (it contains neither), leaving a table
-        # with no column labels.
         pm2 list 2>/dev/null
     else
         ls "${FROSTY_VPS_IMG_DIR}"/*.meta 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.meta$//' || echo "  No VMs found."
@@ -528,7 +521,7 @@ vps_dashboard() {
 vps_start() {
     echo ""
     _frosty_vps_check_stack || return 1
-    read -rp "  VM name to start: " vm_name
+    read -erp "  VM name to start: " vm_name
     if [[ ! -f "${FROSTY_VPS_IMG_DIR}/${vm_name}.meta" ]]; then
         _frosty_fail "VM '$vm_name' not found"
         return 1
@@ -544,7 +537,7 @@ vps_start() {
 vps_stop() {
     echo ""
     _frosty_vps_check_stack || return 1
-    read -rp "  VM name to stop: " vm_name
+    read -erp "  VM name to stop: " vm_name
     load_module "pm2.sh"
     if pm2 stop "$(_frosty_vps_pm2_name "$vm_name")" >/dev/null 2>&1; then
         _frosty_ok "'$vm_name' stop signal sent"
@@ -558,7 +551,7 @@ vps_stop() {
 vps_edit_config() {
     echo ""
     _frosty_vps_check_stack || return 1
-    read -rp "  VM name to edit: " vm_name
+    read -erp "  VM name to edit: " vm_name
     if [[ ! -f "${FROSTY_VPS_IMG_DIR}/${vm_name}.meta" ]]; then
         _frosty_fail "VM '$vm_name' not found"
         return 1
@@ -566,12 +559,22 @@ vps_edit_config() {
 
     echo "  [1] Change RAM  [2] Change vCPUs"
     echo -e "  ${C_YELLOW:-}Note: changes require a restart to take effect (no live-resize without libvirt)${C_RESET:-}"
-    read -rp "  Choice: " edit_choice
+    read -erp "  Choice: " edit_choice
     local meta="${FROSTY_VPS_IMG_DIR}/${vm_name}.meta"
     case "$edit_choice" in
         1)
-            read -rp "  New RAM in MB: " new_ram
-            new_ram="$(echo "$new_ram" | tr -cd '0-9')"
+            read -erp "  New RAM in MB (e.g. 32768): " new_ram
+            new_ram="${new_ram//[[:space:]]/}"
+            if [[ ! "$new_ram" =~ ^[0-9]+$ ]]; then
+                _frosty_fail "RAM must be a plain number (got '${new_ram}')"
+                return 1
+            fi
+            local host_avail_mb
+            host_avail_mb="$(free -m | awk '/^Mem:/{print $7}')"
+            if [[ -n "$host_avail_mb" && "$new_ram" -ge "$host_avail_mb" ]]; then
+                _frosty_fail "Requested RAM (${new_ram} MB) exceeds available host memory (${host_avail_mb} MB)"
+                return 1
+            fi
             sed -i "s/^vm_ram=.*/vm_ram=${new_ram}/" "$meta"
             load_module "pm2.sh"
             pm2 delete "$(_frosty_vps_pm2_name "$vm_name")" >/dev/null 2>&1
@@ -579,8 +582,12 @@ vps_edit_config() {
             _frosty_ok "RAM updated to ${new_ram}MB, VM restarted"
             ;;
         2)
-            read -rp "  New vCPU count: " new_cpu
-            new_cpu="$(echo "$new_cpu" | tr -cd '0-9')"
+            read -erp "  New vCPU count: " new_cpu
+            new_cpu="${new_cpu//[[:space:]]/}"
+            if [[ ! "$new_cpu" =~ ^[0-9]+$ ]]; then
+                _frosty_fail "vCPU count must be a plain number (got '${new_cpu}')"
+                return 1
+            fi
             sed -i "s/^vm_cpu=.*/vm_cpu=${new_cpu}/" "$meta"
             load_module "pm2.sh"
             pm2 delete "$(_frosty_vps_pm2_name "$vm_name")" >/dev/null 2>&1
@@ -594,8 +601,8 @@ vps_edit_config() {
 vps_delete() {
     echo ""
     _frosty_vps_check_stack || return 1
-    read -rp "  VM name to DELETE: " vm_name
-    read -rp "  Type DELETE to confirm removing '$vm_name' and its disk: " confirm
+    read -erp "  VM name to DELETE: " vm_name
+    read -erp "  Type DELETE to confirm removing '$vm_name' and its disk: " confirm
     if [[ "$confirm" != "DELETE" ]]; then
         echo "Cancelled."
         return 1
@@ -611,12 +618,10 @@ vps_delete() {
     _frosty_ok "'$vm_name' deleted"
 }
 
-# Internal qcow2 snapshots via qemu-img — the VM must be stopped first
-# since these aren't live/QMP-based snapshots, just offline disk state.
 vps_snapshot_create() {
     echo ""
     _frosty_vps_check_stack || return 1
-    read -rp "  VM name to snapshot: " vm_name
+    read -erp "  VM name to snapshot: " vm_name
     local disk="${FROSTY_VPS_IMG_DIR}/${vm_name}.qcow2"
     if [[ ! -f "$disk" ]]; then
         _frosty_fail "VM '$vm_name' not found"
@@ -626,7 +631,7 @@ vps_snapshot_create() {
         _frosty_fail "Stop the VM first — snapshots require it to be offline"
         return 1
     fi
-    read -rp "  Snapshot name (e.g. before-update): " snap_name
+    read -erp "  Snapshot name (e.g. before-update): " snap_name
     [[ -z "$snap_name" ]] && snap_name="snap-$(date +%Y%m%d-%H%M%S)"
 
     if qemu-img snapshot -c "$snap_name" "$disk" >/tmp/frosty_vps_snap.log 2>&1; then
@@ -639,14 +644,14 @@ vps_snapshot_create() {
 
 vps_snapshot_list() {
     echo ""
-    read -rp "  VM name: " vm_name
+    read -erp "  VM name: " vm_name
     echo "== Snapshots for $vm_name =="
     qemu-img snapshot -l "${FROSTY_VPS_IMG_DIR}/${vm_name}.qcow2" 2>&1
 }
 
 vps_snapshot_restore() {
     echo ""
-    read -rp "  VM name: " vm_name
+    read -erp "  VM name: " vm_name
     local disk="${FROSTY_VPS_IMG_DIR}/${vm_name}.qcow2"
     qemu-img snapshot -l "$disk" 2>/dev/null
     echo ""
@@ -654,8 +659,8 @@ vps_snapshot_restore() {
         _frosty_fail "Stop the VM first — restoring requires it to be offline"
         return 1
     fi
-    read -rp "  Snapshot name to restore: " snap_name
-    read -rp "  Type RESTORE to confirm reverting '$vm_name' to '$snap_name': " confirm
+    read -erp "  Snapshot name to restore: " snap_name
+    read -erp "  Type RESTORE to confirm reverting '$vm_name' to '$snap_name': " confirm
     if [[ "$confirm" != "RESTORE" ]]; then
         echo "Cancelled."
         return 1
@@ -670,11 +675,11 @@ vps_snapshot_restore() {
 
 vps_snapshot_delete() {
     echo ""
-    read -rp "  VM name: " vm_name
+    read -erp "  VM name: " vm_name
     local disk="${FROSTY_VPS_IMG_DIR}/${vm_name}.qcow2"
     qemu-img snapshot -l "$disk" 2>/dev/null
     echo ""
-    read -rp "  Snapshot name to delete: " snap_name
+    read -erp "  Snapshot name to delete: " snap_name
     if qemu-img snapshot -d "$snap_name" "$disk" >/tmp/frosty_vps_snapdel.log 2>&1; then
         _frosty_ok "Snapshot '$snap_name' deleted"
     else
@@ -696,7 +701,7 @@ show_vps_snapshot_submenu() {
     echo -e "${C_CYAN}║  [5] Back                                     ║${C_RESET}"
     echo -e "${C_CYAN}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-5]: " snap_choice
+    read -erp "  Select an option [1-5]: " snap_choice
     case "$snap_choice" in
         1) vps_snapshot_create ;;
         2) vps_snapshot_list ;;
@@ -710,20 +715,17 @@ show_vps_snapshot_submenu() {
     show_vps_snapshot_submenu
 }
 
-# Port forwards are QEMU hostfwd rules baked in at launch time — unlike
-# the old iptables-based approach, there's no live "add a rule" without
-# restarting the VM's QEMU process (SLIRP forwards are fixed at start).
 vps_firewall_add() {
     echo ""
-    read -rp "  VM name: " vm_name
+    read -erp "  VM name: " vm_name
     local meta="${FROSTY_VPS_IMG_DIR}/${vm_name}.meta"
     if [[ ! -f "$meta" ]]; then
         _frosty_fail "VM '$vm_name' not found"
         return 1
     fi
 
-    read -rp "  Host port to forward (e.g. 25565): " new_port
-    read -rp "  Guest port (usually same, e.g. 25565): " guest_port
+    read -erp "  Host port to forward (e.g. 25565): " new_port
+    read -erp "  Guest port (usually same, e.g. 25565): " guest_port
     guest_port="${guest_port:-$new_port}"
 
     local existing
@@ -737,7 +739,7 @@ vps_firewall_add() {
 
 vps_firewall_list() {
     echo ""
-    read -rp "  VM name: " vm_name
+    read -erp "  VM name: " vm_name
     echo "== Forwarded Ports for $vm_name =="
     echo "  SSH: $(_frosty_vps_sshport "$vm_name") -> guest:22"
     local forwards
@@ -761,7 +763,7 @@ show_vps_firewall_submenu() {
     echo -e "${C_CYAN}║  [3] Back                                     ║${C_RESET}"
     echo -e "${C_CYAN}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-3]: " fw_choice
+    read -erp "  Select an option [1-3]: " fw_choice
     case "$fw_choice" in
         1) vps_firewall_add ;;
         2) vps_firewall_list ;;
@@ -773,12 +775,10 @@ show_vps_firewall_submenu() {
     show_vps_firewall_submenu
 }
 
-# Direct SSH into the VM via its hostfwd port — always 127.0.0.1, since
-# there's no separate guest IP in user-mode networking.
 vps_live_terminal() {
     echo ""
     echo -e "${C_CYAN:-}== Live Terminal (Local) ==${C_RESET:-}"
-    read -rp "  VM name to open: " vm_name
+    read -erp "  VM name to open: " vm_name
 
     local ssh_port
     ssh_port="$(_frosty_vps_sshport "$vm_name")"
@@ -789,7 +789,9 @@ vps_live_terminal() {
 
     if ! pm2 describe "$(_frosty_vps_pm2_name "$vm_name")" 2>/dev/null | grep -q "online"; then
         _frosty_warn "'$vm_name' is not running — starting it first..."
-        _frosty_vps_launch "$vm_name"
+        if ! _frosty_vps_launch "$vm_name"; then
+            return 1
+        fi
         sleep 5
     fi
 
@@ -810,7 +812,7 @@ vps_live_terminal() {
 vps_share_tmate() {
     echo ""
     echo "== Share Terminal via tmate =="
-    read -rp "  VM name to access: " vm_name
+    read -erp "  VM name to access: " vm_name
 
     local ssh_port
     ssh_port="$(_frosty_vps_sshport "$vm_name")"
@@ -877,7 +879,7 @@ vps_share_tmate() {
 vps_rejoin_tmate() {
     echo ""
     echo "== Rejoin Existing tmate Session =="
-    read -rp "  VM name: " vm_name
+    read -erp "  VM name: " vm_name
     local tmate_sock="/tmp/frosty-tmate-${vm_name}.sock"
     local ssh_line=""
 
@@ -899,7 +901,7 @@ vps_rejoin_tmate() {
 vps_share_sshx() {
     echo ""
     echo "== Share Terminal via sshx =="
-    read -rp "  VM name to access: " vm_name
+    read -erp "  VM name to access: " vm_name
 
     local ssh_port
     ssh_port="$(_frosty_vps_sshport "$vm_name")"
@@ -951,7 +953,7 @@ vps_share_sshx() {
 vps_rejoin_sshx() {
     echo ""
     echo "== Rejoin Existing sshx Session =="
-    read -rp "  VM name: " vm_name
+    read -erp "  VM name: " vm_name
     local sshx_log="/tmp/frosty-sshx-${vm_name}.log"
     local sshx_pidfile="/tmp/frosty-sshx-${vm_name}.pid"
 
@@ -996,7 +998,7 @@ show_vps_kvm_full_menu() {
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-15]: " vps_choice
+    read -erp "  Select an option [1-15]: " vps_choice
 
     case "$vps_choice" in
         1) vps_create ;;
