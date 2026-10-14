@@ -38,6 +38,65 @@ _frosty_clean_num() {
     echo "$1" | sed 's/\x1b\[[0-9;]*[a-zA-Z~]//g' | grep -oE '[0-9]+' | tail -n 1
 }
 
+# Ensures the VM has been updated, has neofetch/screenfetch/fastfetch installed,
+# aliases neofetch if needed, and hooks /root/.bashrc so EVERY login (Live Terminal,
+# tmate, sshx, or direct SSH) automatically displays the fetch banner.
+_frosty_vps_run_postsetup() {
+    local vm_name="$1"
+    local ssh_port="$2"
+    echo "    Running post-boot setup inside '$vm_name' (apt update, upgrade & fetch tool)..."
+    ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -p "$ssh_port" \
+        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o BatchMode=yes \
+        "root@127.0.0.1" '
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get -o DPkg::Lock::Timeout=120 update -y >/dev/null 2>&1
+        apt-get -o DPkg::Lock::Timeout=120 upgrade -y >/dev/null 2>&1
+        apt-get -o DPkg::Lock::Timeout=120 install -y neofetch >/dev/null 2>&1 || \
+        apt-get -o DPkg::Lock::Timeout=120 install -y screenfetch >/dev/null 2>&1 || \
+        apt-get -o DPkg::Lock::Timeout=120 install -y fastfetch >/dev/null 2>&1
+
+        # If Ubuntu/Debian replaced neofetch with screenfetch or fastfetch,
+        # symlink neofetch so typing "neofetch" manually works too.
+        if ! command -v neofetch >/dev/null 2>&1; then
+            if command -v fastfetch >/dev/null 2>&1; then
+                ln -sf "$(command -v fastfetch)" /usr/local/bin/neofetch
+            elif command -v screenfetch >/dev/null 2>&1; then
+                ln -sf "$(command -v screenfetch)" /usr/local/bin/neofetch
+            fi
+        fi
+
+        # Hook /root/.bashrc so any interactive SSH / Live Terminal / tmate / sshx
+        # automatically runs the fetch tool on login.
+        if ! grep -q "FROSTY_AUTO_FETCH" /root/.bashrc 2>/dev/null; then
+            cat >> /root/.bashrc << "BRC"
+
+# FROSTY_AUTO_FETCH
+if [[ $- == *i* ]]; then
+    if command -v neofetch >/dev/null 2>&1; then
+        neofetch
+    elif command -v screenfetch >/dev/null 2>&1; then
+        screenfetch
+    elif command -v fastfetch >/dev/null 2>&1; then
+        fastfetch
+    fi
+fi
+BRC
+        fi
+    ' >/tmp/frosty_vps_postsetup_${vm_name}.log 2>&1
+}
+
+# Quick check before opening Live Terminal / tmate / sshx: if the VM missed
+# post-boot setup earlier, install the fetch tool + .bashrc hook right now.
+_frosty_vps_ensure_fetch() {
+    local vm_name="$1"
+    local ssh_port="$2"
+    if ! ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -p "$ssh_port" \
+        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o BatchMode=yes \
+        "root@127.0.0.1" "grep -q FROSTY_AUTO_FETCH /root/.bashrc && (command -v neofetch >/dev/null 2>&1 || command -v screenfetch >/dev/null 2>&1 || command -v fastfetch >/dev/null 2>&1)" >/dev/null 2>&1; then
+        _frosty_vps_run_postsetup "$vm_name" "$ssh_port"
+    fi
+}
+
 install_vps_stack() {
     echo ""
     echo "== Installing QEMU VPS Stack =="
@@ -380,6 +439,10 @@ vps_create() {
     cat > "${cloud_dir}/user-data" << CIEOF
 #cloud-config
 hostname: ${vm_name}
+package_update: true
+package_upgrade: true
+packages:
+  - screenfetch
 users:
   - name: root
     lock_passwd: false
@@ -392,7 +455,9 @@ chpasswd:
   expire: false
 runcmd:
   - sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+  - sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
   - systemctl restart sshd || service ssh restart
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y neofetch || DEBIAN_FRONTEND=noninteractive apt-get install -y screenfetch || DEBIAN_FRONTEND=noninteractive apt-get install -y fastfetch || true
 CIEOF
     cat > "${cloud_dir}/meta-data" << CIEOF
 instance-id: ${vm_name}
@@ -418,10 +483,10 @@ METAEOF
     fi
     _frosty_ok "VM '${vm_name}' created and starting (SSH will be on 127.0.0.1:${ssh_port})"
 
-    echo "    Waiting for SSH to come up inside the VM (up to 120s — first boot initializes cloud-init)..."
+    echo "    Waiting for SSH to come up inside the VM (up to 180s — first boot initializes cloud-init)..."
     local ssh_ready=0
-    for i in $(seq 1 40); do
-        if ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -p "$ssh_port" -o StrictHostKeyChecking=no -o ConnectTimeout=3 -o BatchMode=yes "root@127.0.0.1" "echo ok" >/dev/null 2>&1; then
+    for i in $(seq 1 60); do
+        if ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -p "$ssh_port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=3 -o BatchMode=yes "root@127.0.0.1" "echo ok" >/dev/null 2>&1; then
             ssh_ready=1
             break
         fi
@@ -429,26 +494,14 @@ METAEOF
     done
 
     if [[ "$ssh_ready" -eq 0 ]]; then
-        _frosty_warn "SSH not reachable yet after 120s — it may still be booting. Check: pm2 logs $(_frosty_vps_pm2_name "$vm_name")"
-        _frosty_warn "Retry manually later with: ssh -i ${FROSTY_VPS_DIR}/frosty_vps_key -p ${ssh_port} root@127.0.0.1"
+        _frosty_warn "SSH not reachable yet after 180s — it may still be booting. Check: pm2 logs $(_frosty_vps_pm2_name "$vm_name")"
+        _frosty_warn "Post-boot setup will run automatically the first time you open Live Terminal / tmate / sshx."
     else
         _frosty_ok "SSH reachable"
-        echo "    Running post-boot setup (update, upgrade, fetch tool)..."
-        ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -p "$ssh_port" -o StrictHostKeyChecking=no -o BatchMode=yes "root@127.0.0.1" '
-            export DEBIAN_FRONTEND=noninteractive
-            apt update -y
-            apt upgrade -y
-            if apt-cache show neofetch >/dev/null 2>&1; then
-                apt install -y neofetch
-            elif apt-cache show screenfetch >/dev/null 2>&1; then
-                apt install -y screenfetch
-            fi
-        ' >/tmp/frosty_vps_postsetup_${vm_name}.log 2>&1
-
-        if [[ $? -eq 0 ]]; then
-            _frosty_ok "Post-boot setup complete"
+        if _frosty_vps_run_postsetup "$vm_name" "$ssh_port"; then
+            _frosty_ok "Post-boot setup complete (system updated, fetch tool & auto-fetch installed)"
         else
-            _frosty_warn "Post-boot setup had issues — see /tmp/frosty_vps_postsetup_${vm_name}.log"
+            _frosty_warn "Post-boot setup had minor issues — see /tmp/frosty_vps_postsetup_${vm_name}.log"
         fi
     fi
 
@@ -802,15 +855,17 @@ vps_live_terminal() {
     fi
 
     echo "    Checking SSH is reachable..."
-    if ! ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -p "$ssh_port" -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes "root@127.0.0.1" "echo ok" >/dev/null 2>&1; then
+    if ! ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -p "$ssh_port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5 -o BatchMode=yes "root@127.0.0.1" "echo ok" >/dev/null 2>&1; then
         _frosty_fail "Could not reach '$vm_name' on port ${ssh_port} — it may still be booting"
         _frosty_warn "Try again in a few seconds, or check: pm2 logs $(_frosty_vps_pm2_name "$vm_name")"
         return 1
     fi
 
+    _frosty_vps_ensure_fetch "$vm_name" "$ssh_port"
+
     echo -e "    ${C_YELLOW:-}Opening a live terminal into '$vm_name'. Type 'exit' to return.${C_RESET:-}"
     echo ""
-    ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -p "$ssh_port" -o StrictHostKeyChecking=no -tt "root@127.0.0.1" "command -v neofetch >/dev/null 2>&1 && neofetch || (command -v screenfetch >/dev/null 2>&1 && screenfetch); exec bash -l" </dev/tty
+    ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -p "$ssh_port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -tt "root@127.0.0.1" "exec bash -l" </dev/tty
     echo ""
     _frosty_ok "Returned from live terminal into '$vm_name'"
 }
@@ -848,6 +903,8 @@ vps_share_tmate() {
     fi
     _frosty_ok "tmate.io is reachable"
 
+    _frosty_vps_ensure_fetch "$vm_name" "$ssh_port"
+
     local tmate_sock="/tmp/frosty-tmate-${vm_name}.sock"
     local ssh_line=""
     ssh_line="$(tmate -S "$tmate_sock" display -p '#{tmate_ssh}' 2>/dev/null)"
@@ -859,7 +916,7 @@ vps_share_tmate() {
         rm -f "$tmate_sock"
         echo -e "    ${C_CYAN:-}Starting a new tmate session into VM '$vm_name'...${C_RESET:-}"
         tmate -S "$tmate_sock" -f /dev/null new-session -d -n frosty-vps \
-            "ssh -i ${FROSTY_VPS_DIR}/frosty_vps_key -p ${ssh_port} -o StrictHostKeyChecking=no -t root@127.0.0.1 'command -v neofetch >/dev/null 2>&1 && neofetch || screenfetch; exec bash -l'" \
+            "ssh -i ${FROSTY_VPS_DIR}/frosty_vps_key -p ${ssh_port} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -t root@127.0.0.1 'exec bash -l'" \
             2>/tmp/frosty_tmate_session.log
 
         echo -n "    Waiting for tmate to establish the session"
@@ -933,10 +990,11 @@ vps_share_sshx() {
             _frosty_fail "Cannot reach sshx.io from this host"
             return 1
         fi
+        _frosty_vps_ensure_fetch "$vm_name" "$ssh_port"
         echo -e "    ${C_CYAN:-}Starting a new sshx session into VM '$vm_name'...${C_RESET:-}"
         rm -f "$sshx_log"
         (
-            ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -p "$ssh_port" -o StrictHostKeyChecking=no -tt "root@127.0.0.1" "command -v sshx >/dev/null 2>&1 || curl -sSf https://sshx.io/get | sh; (command -v neofetch >/dev/null 2>&1 && neofetch || screenfetch) ; sshx" > "$sshx_log" 2>&1
+            ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -p "$ssh_port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -tt "root@127.0.0.1" "command -v sshx >/dev/null 2>&1 || curl -sSf https://sshx.io/get | sh; sshx" > "$sshx_log" 2>&1
         ) &
         echo $! > "$sshx_pidfile"
 
