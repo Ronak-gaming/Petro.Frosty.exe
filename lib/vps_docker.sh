@@ -7,12 +7,9 @@ install_vps_docker_stack() {
     echo ""
     echo "== Setting Up Docker-based VPS (no KVM available) =="
 
-    # If an earlier run happened under a different user, these log
-    # files can be left owned by that user — root can DELETE them (the
-    # /tmp sticky bit allows that) but not overwrite their content with
-    # a redirect, which silently breaks every "> logfile" below with
-    # "Permission denied". Clear them first so this can't recur.
-    rm -f /tmp/frosty_vps_docker_install.log /tmp/frosty_vps_dockerd.log           /tmp/frosty_vps_docker_pull.log /tmp/frosty_vps_docker_run.log           /tmp/frosty_vps_docker_ssh_setup.log 2>/dev/null
+    rm -f /tmp/frosty_vps_docker_install.log /tmp/frosty_vps_dockerd.log \
+          /tmp/frosty_vps_docker_pull.log /tmp/frosty_vps_docker_run.log \
+          /tmp/frosty_vps_docker_ssh_setup.log 2>/dev/null
 
     if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
         echo "    Installing Docker..."
@@ -31,7 +28,7 @@ install_vps_docker_stack() {
         echo "  Docker VPS isn't usable here. Falling back to KVM/TCG VPS instead"
         echo "  (a real VM — uses hardware acceleration if available, software"
         echo "  emulation if not, rather than a container)."
-        read -rp "  Continue with KVM/TCG VPS setup now? [y/n]: " fallback_choice
+        read -erp "  Continue with KVM/TCG VPS setup now? [y/n]: " fallback_choice
         if [[ "$fallback_choice" =~ ^[Yy]$ ]]; then
             load_module "vps.sh"
             if install_vps_stack; then
@@ -43,14 +40,6 @@ install_vps_docker_stack() {
     fi
     _frosty_ok "Docker available"
 
-    # A container can get an IP but still have ZERO real network access
-    # (0 KB/s, apt update hangs forever) if either of these is wrong on
-    # the HOST — Docker itself can't fix this from inside the container:
-    #   1. IP forwarding disabled — the kernel simply won't route
-    #      container traffic out to the internet at all.
-    #   2. Docker's NAT/MASQUERADE iptables rule never got programmed,
-    #      which happens if Docker started before iptables was ready.
-    # Fixing both here so every container gets working network by default.
     echo "    Verifying container networking (IP forwarding + NAT)..."
     if [[ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" != "1" ]]; then
         sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1
@@ -117,14 +106,13 @@ _frosty_vps_docker_ssh_port() {
 }
 
 show_vps_docker_menu() {
-    clear
-    print_banner
-
     if vps_docker_exists_any; then
         show_vps_docker_full_menu
         return 0
     fi
 
+    clear
+    print_banner
     echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}          ${C_ICE}${C_BOLD}❄  D O C K E R   V P S  ❄${C_RESET}          ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
@@ -134,7 +122,7 @@ show_vps_docker_menu() {
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-2]: " gate_choice
+    read -erp "  Select an option [1-2]: " gate_choice
 
     case "$gate_choice" in
         1)
@@ -165,7 +153,8 @@ vps_docker_create() {
     echo ""
     echo -e "${C_CYAN:-}== Create New VPS (Docker) ==${C_RESET:-}"
     echo ""
-    read -rp "  VPS name (e.g. client1-vps): " vm_name
+    read -erp "  VPS name (e.g. client1-vps): " vm_name
+    vm_name="$(echo "$vm_name" | tr -cd 'A-Za-z0-9_-')"
     [[ -z "$vm_name" ]] && { _frosty_fail "Name required"; return 1; }
 
     if docker inspect "frosty-vps-${vm_name}" >/dev/null 2>&1; then
@@ -175,7 +164,7 @@ vps_docker_create() {
 
     echo "  Image: [1] Ubuntu 26.04 LTS  [2] Ubuntu 24.04 LTS  [3] Ubuntu 22.04 LTS"
     echo "         [4] Debian 11  [5] Debian 12  [6] Debian 13"
-    read -rp "  Choice [1-6]: " img_choice
+    read -erp "  Choice [1-6]: " img_choice
     case "$img_choice" in
         1) img_key="ubuntu2604" ;;
         2) img_key="ubuntu2404" ;;
@@ -189,21 +178,28 @@ vps_docker_create() {
     docker_img="$(_frosty_vps_docker_image "$img_key")"
 
     echo "  Resource preset: [1] Small (1 CPU/1GB)  [2] Medium (2 CPU/2GB)  [3] Large (4 CPU/4GB)  [4] Custom"
-    read -rp "  Choice [1-4]: " preset_choice
+    read -erp "  Choice [1-4]: " preset_choice
     case "$preset_choice" in
         1) vm_cpu=1; vm_ram=1024 ;;
         2) vm_cpu=2; vm_ram=2048 ;;
         3) vm_cpu=4; vm_ram=4096 ;;
         4)
-            read -rp "  RAM in MB: " vm_ram
-            read -rp "  CPU cores: " vm_cpu
+            read -erp "  RAM in MB (e.g. 4096): " vm_ram
+            read -erp "  CPU cores (e.g. 2): " vm_cpu
             ;;
         *) _frosty_fail "Invalid preset choice"; return 1 ;;
     esac
-    vm_ram="$(echo "$vm_ram" | tr -cd '0-9')"
-    vm_cpu="$(echo "$vm_cpu" | tr -cd '0-9')"
-    if [[ -z "$vm_ram" || -z "$vm_cpu" ]]; then
-        _frosty_fail "RAM and CPU must be numbers"
+    vm_ram="${vm_ram//[[:space:]]/}"
+    vm_cpu="${vm_cpu//[[:space:]]/}"
+    if [[ ! "$vm_ram" =~ ^[0-9]+$ || ! "$vm_cpu" =~ ^[0-9]+$ ]]; then
+        _frosty_fail "RAM and CPU must be plain numbers (got RAM='${vm_ram}', CPU='${vm_cpu}')"
+        return 1
+    fi
+
+    local host_avail_mb
+    host_avail_mb="$(free -m | awk '/^Mem:/{print $7}')"
+    if [[ -n "$host_avail_mb" && "$vm_ram" -ge "$host_avail_mb" ]]; then
+        _frosty_fail "Requested RAM (${vm_ram} MB) exceeds available host memory (${host_avail_mb} MB)"
         return 1
     fi
 
@@ -217,17 +213,12 @@ vps_docker_create() {
     local pubkey
     pubkey="$(cat "${FROSTY_VPS_DOCKER_DIR}/frosty_vps_key.pub" 2>/dev/null)"
 
-    # Pick a random port in a wide range and verify it's actually free,
-    # rather than counting up from a fixed start — with two independent
-    # VPS systems (this one and the KVM/TCG one in vps.sh) both claiming
-    # host ports, starting from the same low number every time made
-    # collisions likely. Checks actual system-wide listening ports, not
-    # just other Docker containers, since QEMU claims ports the same way.
     local ssh_port=""
     local port_attempts=0
     while [[ -z "$ssh_port" && $port_attempts -lt 50 ]]; do
         local candidate=$(( (RANDOM % 40000) + 20000 ))
-        if ! ss -ltn 2>/dev/null | grep -q ":${candidate} " &&            ! docker ps -a --format '{{.Ports}}' | grep -q ":${candidate}->"; then
+        if ! ss -ltn 2>/dev/null | grep -q ":${candidate} " && \
+           ! docker ps -a --format '{{.Ports}}' | grep -q ":${candidate}->"; then
             ssh_port="$candidate"
         fi
         port_attempts=$((port_attempts + 1))
@@ -248,7 +239,7 @@ vps_docker_create() {
         --cpus "$vm_cpu" \
         --restart unless-stopped \
         -p "${ssh_port}:22" \
-        "$docker_img" sleep infinity >/tmp/frosty_vps_docker_run.log 2>&1
+        "$docker_img" bash -c "while true; do [[ -x /usr/sbin/sshd ]] && ! pgrep -x sshd >/dev/null 2>&1 && mkdir -p /run/sshd && /usr/sbin/sshd; sleep 5; done" >/tmp/frosty_vps_docker_run.log 2>&1
 
     if [[ $? -ne 0 ]]; then
         _frosty_fail "Container creation failed — see /tmp/frosty_vps_docker_run.log"
@@ -291,7 +282,7 @@ created=$(date '+%Y-%m-%d %H:%M:%S')
 ssh_port=${ssh_port}
 METAEOF
 
-      echo ""
+    echo ""
     echo -e "    ${C_CYAN:-}Setting up sharing links automatically...${C_RESET:-}"
     echo ""
     echo -e "    ${C_CYAN:-}-- tmate --${C_RESET:-}"
@@ -311,7 +302,7 @@ vps_docker_list() {
 
 vps_docker_start() {
     echo ""
-    read -rp "  VPS name to start: " vm_name
+    read -erp "  VPS name to start: " vm_name
     if docker start "frosty-vps-${vm_name}" >/dev/null 2>&1; then
         _frosty_ok "'$vm_name' started"
     else
@@ -322,7 +313,7 @@ vps_docker_start() {
 
 vps_docker_stop() {
     echo ""
-    read -rp "  VPS name to stop: " vm_name
+    read -erp "  VPS name to stop: " vm_name
     if docker stop "frosty-vps-${vm_name}" >/dev/null 2>&1; then
         _frosty_ok "'$vm_name' stopped"
     else
@@ -333,8 +324,8 @@ vps_docker_stop() {
 
 vps_docker_delete() {
     echo ""
-    read -rp "  VPS name to DELETE: " vm_name
-    read -rp "  Type DELETE to confirm: " confirm
+    read -erp "  VPS name to DELETE: " vm_name
+    read -erp "  Type DELETE to confirm: " confirm
     if [[ "$confirm" != "DELETE" ]]; then
         echo "Cancelled."
         return 1
@@ -352,24 +343,32 @@ vps_docker_dashboard() {
 
 vps_docker_edit_config() {
     echo ""
-    read -rp "  VPS name to edit: " vm_name
+    read -erp "  VPS name to edit: " vm_name
     if ! docker inspect "frosty-vps-${vm_name}" >/dev/null 2>&1; then
         _frosty_fail "VPS '$vm_name' not found"
         return 1
     fi
 
     echo "  [1] Change RAM  [2] Change CPU limit"
-    read -rp "  Choice: " edit_choice
+    read -erp "  Choice: " edit_choice
     case "$edit_choice" in
         1)
-            read -rp "  New RAM in MB: " new_ram
-            new_ram="$(echo "$new_ram" | tr -cd '0-9')"
+            read -erp "  New RAM in MB: " new_ram
+            new_ram="${new_ram//[[:space:]]/}"
+            if [[ ! "$new_ram" =~ ^[0-9]+$ ]]; then
+                _frosty_fail "RAM must be a plain number (got '${new_ram}')"
+                return 1
+            fi
             docker update --memory "${new_ram}m" --memory-swap "${new_ram}m" "frosty-vps-${vm_name}" >/dev/null 2>&1
             _frosty_ok "RAM updated to ${new_ram}MB"
             ;;
         2)
-            read -rp "  New CPU limit (cores): " new_cpu
-            new_cpu="$(echo "$new_cpu" | tr -cd '0-9')"
+            read -erp "  New CPU limit (cores): " new_cpu
+            new_cpu="${new_cpu//[[:space:]]/}"
+            if [[ ! "$new_cpu" =~ ^[0-9]+$ ]]; then
+                _frosty_fail "CPU limit must be a plain number (got '${new_cpu}')"
+                return 1
+            fi
             docker update --cpus "$new_cpu" "frosty-vps-${vm_name}" >/dev/null 2>&1
             _frosty_ok "CPU limit updated to ${new_cpu}"
             ;;
@@ -380,7 +379,7 @@ vps_docker_edit_config() {
 vps_docker_live_terminal() {
     echo ""
     echo -e "${C_CYAN:-}== Live Terminal (Local) ==${C_RESET:-}"
-    read -rp "  VPS name to open: " vm_name
+    read -erp "  VPS name to open: " vm_name
 
     if ! docker inspect "frosty-vps-${vm_name}" >/dev/null 2>&1; then
         _frosty_fail "VPS '$vm_name' not found"
@@ -403,7 +402,7 @@ vps_docker_live_terminal() {
 vps_docker_share_sshx() {
     echo ""
     echo "== Share Terminal via sshx =="
-    read -rp "  VPS name to access: " vm_name
+    read -erp "  VPS name to access: " vm_name
 
     if ! docker inspect "frosty-vps-${vm_name}" >/dev/null 2>&1; then
         _frosty_fail "VPS '$vm_name' not found"
@@ -462,7 +461,7 @@ vps_docker_share_sshx() {
 vps_docker_rejoin_sshx() {
     echo ""
     echo "== Rejoin Existing sshx Session =="
-    read -rp "  VPS name: " vm_name
+    read -erp "  VPS name: " vm_name
     local sshx_log="/tmp/frosty-sshx-docker-${vm_name}.log"
     local sshx_pidfile="/tmp/frosty-sshx-docker-${vm_name}.pid"
 
@@ -485,7 +484,7 @@ vps_docker_rejoin_sshx() {
 vps_docker_share_tmate() {
     echo ""
     echo "== Share Terminal via tmate =="
-    read -rp "  VPS name to access: " vm_name
+    read -erp "  VPS name to access: " vm_name
 
     if ! docker inspect "frosty-vps-${vm_name}" >/dev/null 2>&1; then
         _frosty_fail "VPS '$vm_name' not found"
@@ -570,7 +569,7 @@ vps_docker_share_tmate() {
 vps_docker_rejoin_tmate() {
     echo ""
     echo "== Rejoin Existing tmate Session =="
-    read -rp "  VPS name: " vm_name
+    read -erp "  VPS name: " vm_name
     local tmate_sock="/tmp/frosty-tmate-docker-${vm_name}.sock"
     local ssh_line=""
 
@@ -614,7 +613,7 @@ show_vps_docker_full_menu() {
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-13]: " vps_choice
+    read -erp "  Select an option [1-13]: " vps_choice
 
     case "$vps_choice" in
         1) vps_docker_create ;;
