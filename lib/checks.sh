@@ -6,14 +6,17 @@
 set -uo pipefail
 
 FROSTY_REQUIRED_COMMANDS=(
-    curl wget tar gzip grep awk sed systemctl
+    curl wget tar gzip grep awk sed
 )
 
 FROSTY_CHECK_FAILED=0
 
-_frosty_ok()   { echo -e "[\e[32m✓\e[0m] $1"; }
-_frosty_warn() { echo -e "[\e[33m!\e[0m] $1"; }
-_frosty_fail() { echo -e "[\e[31m✗\e[0m] $1"; FROSTY_CHECK_FAILED=1; }
+# Only define fallback logging helpers if logging.sh hasn't been loaded yet
+if ! declare -F _frosty_ok >/dev/null 2>&1; then
+    _frosty_ok()   { echo -e "[\e[32m✓\e[0m] $1"; }
+    _frosty_warn() { echo -e "[\e[33m!\e[0m] $1"; }
+    _frosty_fail() { echo -e "[\e[31m✗\e[0m] $1"; FROSTY_CHECK_FAILED=1; }
+fi
 
 check_root() {
     echo "== Checking privileges =="
@@ -44,7 +47,7 @@ check_supported_os() {
 
     local supported=0
     case "${FROSTY_OS_ID}:${FROSTY_OS_VERSION}" in
-        "ubuntu:20.04"|"ubuntu:22.04"|"ubuntu:24.04"|"debian:11"|"debian:12")
+        "ubuntu:20.04"|"ubuntu:22.04"|"ubuntu:24.04"|"ubuntu:26.04"|"debian:11"|"debian:12"|"debian:13")
             supported=1
             ;;
     esac
@@ -54,7 +57,7 @@ check_supported_os() {
         return 0
     else
         _frosty_fail "Unsupported OS: ${FROSTY_OS_PRETTY:-$FROSTY_OS_ID $FROSTY_OS_VERSION}"
-        echo "    Supported: Ubuntu 20.04/22.04/24.04, Debian 11/12"
+        echo "    Supported: Ubuntu 20.04/22.04/24.04/26.04, Debian 11/12/13"
         return 1
     fi
 }
