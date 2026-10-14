@@ -239,7 +239,7 @@ _frosty_vps_launch() {
     if [[ "$(_frosty_vps_kvm_usable)" -eq 1 ]]; then
         accel_args=(-enable-kvm -cpu host)
     else
-        accel_args=(-cpu qemu64)
+        accel_args=(-accel tcg,thread=multi -cpu max)
     fi
 
     load_module "pm2.sh"
@@ -418,9 +418,9 @@ METAEOF
     fi
     _frosty_ok "VM '${vm_name}' created and starting (SSH will be on 127.0.0.1:${ssh_port})"
 
-    echo "    Waiting for SSH to come up inside the VM (up to 90s — first boot is slower)..."
+    echo "    Waiting for SSH to come up inside the VM (up to 120s — first boot initializes cloud-init)..."
     local ssh_ready=0
-    for i in $(seq 1 30); do
+    for i in $(seq 1 40); do
         if ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -p "$ssh_port" -o StrictHostKeyChecking=no -o ConnectTimeout=3 -o BatchMode=yes "root@127.0.0.1" "echo ok" >/dev/null 2>&1; then
             ssh_ready=1
             break
@@ -429,7 +429,7 @@ METAEOF
     done
 
     if [[ "$ssh_ready" -eq 0 ]]; then
-        _frosty_warn "SSH not reachable yet after 90s — it may still be booting. Check: pm2 logs $(_frosty_vps_pm2_name "$vm_name")"
+        _frosty_warn "SSH not reachable yet after 120s — it may still be booting. Check: pm2 logs $(_frosty_vps_pm2_name "$vm_name")"
         _frosty_warn "Retry manually later with: ssh -i ${FROSTY_VPS_DIR}/frosty_vps_key -p ${ssh_port} root@127.0.0.1"
     else
         _frosty_ok "SSH reachable"
@@ -466,9 +466,9 @@ METAEOF
     read -rp "  Choice [1-4]: " share_now
     share_now="$(_frosty_clean_num "$share_now")"
     case "$share_now" in
-        1) vps_share_tmate <<< "$vm_name" ;;
-        2) vps_share_sshx <<< "$vm_name" ;;
-        3) vps_live_terminal <<< "$vm_name" ;;
+        1) vps_share_tmate "$vm_name" ;;
+        2) vps_share_sshx "$vm_name" ;;
+        3) vps_live_terminal "$vm_name" ;;
         *) : ;;
     esac
 
@@ -781,7 +781,10 @@ show_vps_firewall_submenu() {
 vps_live_terminal() {
     echo ""
     echo -e "${C_CYAN:-}== Live Terminal (Local) ==${C_RESET:-}"
-    read -rp "  VM name to open: " vm_name
+    local vm_name="${1:-}"
+    if [[ -z "$vm_name" ]]; then
+        read -rp "  VM name to open: " vm_name
+    fi
 
     local ssh_port
     ssh_port="$(_frosty_vps_sshport "$vm_name")"
@@ -807,7 +810,7 @@ vps_live_terminal() {
 
     echo -e "    ${C_YELLOW:-}Opening a live terminal into '$vm_name'. Type 'exit' to return.${C_RESET:-}"
     echo ""
-    ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -p "$ssh_port" -o StrictHostKeyChecking=no -t "root@127.0.0.1" "command -v neofetch >/dev/null 2>&1 && neofetch || (command -v screenfetch >/dev/null 2>&1 && screenfetch); exec bash -l"
+    ssh -i "${FROSTY_VPS_DIR}/frosty_vps_key" -p "$ssh_port" -o StrictHostKeyChecking=no -tt "root@127.0.0.1" "command -v neofetch >/dev/null 2>&1 && neofetch || (command -v screenfetch >/dev/null 2>&1 && screenfetch); exec bash -l" </dev/tty
     echo ""
     _frosty_ok "Returned from live terminal into '$vm_name'"
 }
@@ -815,7 +818,10 @@ vps_live_terminal() {
 vps_share_tmate() {
     echo ""
     echo "== Share Terminal via tmate =="
-    read -rp "  VM name to access: " vm_name
+    local vm_name="${1:-}"
+    if [[ -z "$vm_name" ]]; then
+        read -rp "  VM name to access: " vm_name
+    fi
 
     local ssh_port
     ssh_port="$(_frosty_vps_sshport "$vm_name")"
@@ -892,7 +898,7 @@ vps_rejoin_tmate() {
         _frosty_warn "No live tmate session found for '$vm_name' — starting a new one instead"
         [[ -S "$tmate_sock" ]] && tmate -S "$tmate_sock" kill-server >/dev/null 2>&1
         rm -f "$tmate_sock"
-        vps_share_tmate <<< "$vm_name"
+        vps_share_tmate "$vm_name"
         return 0
     fi
 
@@ -904,7 +910,10 @@ vps_rejoin_tmate() {
 vps_share_sshx() {
     echo ""
     echo "== Share Terminal via sshx =="
-    read -rp "  VM name to access: " vm_name
+    local vm_name="${1:-}"
+    if [[ -z "$vm_name" ]]; then
+        read -rp "  VM name to access: " vm_name
+    fi
 
     local ssh_port
     ssh_port="$(_frosty_vps_sshport "$vm_name")"
@@ -962,7 +971,7 @@ vps_rejoin_sshx() {
 
     if [[ ! -f "$sshx_pidfile" ]] || ! kill -0 "$(cat "$sshx_pidfile" 2>/dev/null)" 2>/dev/null; then
         _frosty_warn "No active sshx session found for '$vm_name' — starting a new one instead"
-        vps_share_sshx <<< "$vm_name"
+        vps_share_sshx "$vm_name"
         return 0
     fi
 
