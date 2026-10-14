@@ -2,8 +2,6 @@
 set -uo pipefail
 
 _frosty_check_mem() {
-    # Warn (don't block) if the host has low RAM and no swap — the #1 cause
-    # of composer silently hanging forever instead of erroring out.
     local mem_free_mb swap_total_mb
     mem_free_mb=$(free -m | awk '/^Mem:/{print $7}')
     swap_total_mb=$(free -m | awk '/^Swap:/{print $2}')
@@ -42,7 +40,7 @@ install_composer() {
 
     echo "    Running Composer installer (this should take under a minute)..."
     tail -f /tmp/frosty_composer.log --pid=$$ & local tail_pid=$!
-    timeout 180 php8.3 /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer >>/tmp/frosty_composer.log 2>&1 < /dev/null
+    timeout 180 "php${FROSTY_PHP_VERSION:-8.3}" /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer >>/tmp/frosty_composer.log 2>&1 < /dev/null
     local rc=$?
     kill "${tail_pid}" 2>/dev/null
 
@@ -54,6 +52,50 @@ install_composer() {
 
     _frosty_fail "Composer installation failed or timed out — see /tmp/frosty_composer.log"
     return 1
+}
+
+setup_panel_queue_and_cron() {
+    echo "    Configuring Panel cron job and queue worker (pteroq)..."
+    local php_bin
+    php_bin="$(command -v "php${FROSTY_PHP_VERSION:-8.3}" || echo "/usr/bin/php${FROSTY_PHP_VERSION:-8.3}")"
+    local cron_entry="* * * * * ${php_bin} ${FROSTY_PANEL_DIR}/artisan schedule:run >> /dev/null 2>&1"
+
+    (crontab -l 2>/dev/null | grep -v "artisan schedule:run"; echo "$cron_entry") | crontab - 2>/dev/null || true
+    _frosty_ok "Cron job configured for artisan schedule:run"
+
+    if [[ -d /run/systemd/system ]]; then
+        cat > /etc/systemd/system/pteroq.service << PTEROQEOF
+[Unit]
+Description=Pterodactyl Queue Worker
+After=redis-server.service
+
+[Service]
+User=www-data
+Group=www-data
+Restart=always
+ExecStart=${php_bin} ${FROSTY_PANEL_DIR}/artisan queue:work --queue=high,standard,low --sleep=3 --tries=3
+StartLimitInterval=180
+StartLimitBurst=30
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+PTEROQEOF
+        systemctl daemon-reload
+        systemctl enable --now pteroq.service >/dev/null 2>&1
+        if systemctl is-active --quiet pteroq.service; then
+            _frosty_ok "pteroq queue worker running (systemd)"
+        else
+            _frosty_warn "pteroq service did not start cleanly — check: systemctl status pteroq"
+        fi
+    else
+        load_module "pm2.sh"
+        if _frosty_ensure_pm2; then
+            _frosty_pm2_start "pteroq" "${FROSTY_PANEL_DIR}" "$php_bin" "artisan" "queue:work" "--queue=high,standard,low" "--sleep=3" "--tries=3" >/dev/null 2>&1 && \
+                _frosty_ok "pteroq queue worker running (pm2)" || \
+                _frosty_warn "Could not start pteroq under pm2"
+        fi
+    fi
 }
 
 configure_panel_env() {
@@ -84,7 +126,7 @@ configure_panel_env() {
         tail -f /tmp/frosty_composer_install.log --pid=$$ & local tail_pid=$!
 
         COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_MEMORY_LIMIT=-1 \
-            timeout 900 php8.3 /usr/local/bin/composer install \
+            timeout 900 "php${FROSTY_PHP_VERSION:-8.3}" /usr/local/bin/composer install \
                 --no-dev --optimize-autoloader --no-interaction --no-ansi \
                 >>/tmp/frosty_composer_install.log 2>&1 < /dev/null
         local rc=$?
@@ -97,7 +139,7 @@ configure_panel_env() {
 
         if [[ ${composer_attempt} -eq 1 ]]; then
             _frosty_warn "composer install failed or timed out (attempt 1/2) — clearing cache and retrying..."
-            php8.3 /usr/local/bin/composer clear-cache >/dev/null 2>&1 < /dev/null
+            "php${FROSTY_PHP_VERSION:-8.3}" /usr/local/bin/composer clear-cache >/dev/null 2>&1 < /dev/null
         fi
         composer_attempt=$((composer_attempt + 1))
     done
@@ -110,9 +152,8 @@ configure_panel_env() {
         return 1
     fi
 
-    # Generate app key only if not already set
     if grep -q "^APP_KEY=$" .env || ! grep -q "^APP_KEY=" .env; then
-        if php"${FROSTY_PHP_VERSION:-8.3}" artisan key:generate --force >/tmp/frosty_appkey.log 2>&1; then
+        if "php${FROSTY_PHP_VERSION:-8.3}" artisan key:generate --force >/tmp/frosty_appkey.log 2>&1; then
             _frosty_ok "Application key generated"
         else
             _frosty_fail "Application key generation failed — see /tmp/frosty_appkey.log"
@@ -122,8 +163,7 @@ configure_panel_env() {
         _frosty_ok "Application key already set — skipping"
     fi
 
-    # Set cache/session/queue drivers to redis (standard Pterodactyl config)
-    php"${FROSTY_PHP_VERSION:-8.3}" artisan p:environment:setup \
+    "php${FROSTY_PHP_VERSION:-8.3}" artisan p:environment:setup \
         --author="admin@example.com" \
         --url="http://${FROSTY_PUBLIC_IP:-127.0.0.1}" \
         --timezone="UTC" \
@@ -143,5 +183,6 @@ configure_panel_env() {
         _frosty_warn "p:environment:setup may not have completed cleanly — check /tmp/frosty_env_setup.log"
     fi
 
+    setup_panel_queue_and_cron
     return 0
 }
