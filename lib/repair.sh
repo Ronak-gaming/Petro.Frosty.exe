@@ -12,7 +12,7 @@ repair_all_services() {
     fi
 
     # MariaDB
-       if mysqladmin ping >/dev/null 2>&1; then
+    if mysqladmin ping >/dev/null 2>&1; then
         _frosty_ok "MariaDB already running"
     else
         echo "    Starting MariaDB..."
@@ -21,7 +21,7 @@ repair_all_services() {
         chmod 755 /run/mysqld 2>/dev/null
         if [[ -d /run/systemd/system ]]; then
             systemctl restart mariadb >/dev/null 2>&1
-        elif command -v pm2 >/dev/null 2>&1; then
+        elif _frosty_ensure_pm2 >/dev/null 2>&1; then
             _frosty_pm2_start "mariadb" "/" "/usr/sbin/mariadbd" "--user=mysql" >/dev/null 2>&1
         else
             service mariadb start >/dev/null 2>&1
@@ -29,14 +29,15 @@ repair_all_services() {
         sleep 3
         mysqladmin ping >/dev/null 2>&1 && _frosty_ok "MariaDB started" || _frosty_fail "MariaDB failed to start"
     fi
+
     # Redis
-        if redis-cli ping 2>/dev/null | grep -q PONG; then
+    if redis-cli ping 2>/dev/null | grep -q PONG; then
         _frosty_ok "Redis already running"
     else
         echo "    Starting Redis..."
         if [[ -d /run/systemd/system ]]; then
             systemctl restart redis-server >/dev/null 2>&1
-        elif command -v pm2 >/dev/null 2>&1; then
+        elif _frosty_ensure_pm2 >/dev/null 2>&1; then
             _frosty_pm2_start "redis" "/" "redis-server" "--daemonize" "no" >/dev/null 2>&1
         else
             redis-server --daemonize yes >/dev/null 2>&1
@@ -44,6 +45,7 @@ repair_all_services() {
         sleep 2
         redis-cli ping 2>/dev/null | grep -q PONG && _frosty_ok "Redis started" || _frosty_fail "Redis failed to start"
     fi
+
     # Docker
     if docker info >/dev/null 2>&1; then
         _frosty_ok "Docker already running"
@@ -62,7 +64,11 @@ repair_all_services() {
             fi
             pkill -x dockerd >/dev/null 2>&1
             sleep 1
-            dockerd >/tmp/frosty_dockerd.log 2>&1 &
+            if _frosty_ensure_pm2 >/dev/null 2>&1; then
+                _frosty_pm2_start "dockerd" "/" "/usr/bin/dockerd" >/dev/null 2>&1
+            else
+                dockerd >/tmp/frosty_dockerd.log 2>&1 &
+            fi
             sleep 5
         fi
         docker info >/dev/null 2>&1 && _frosty_ok "Docker started" || _frosty_fail "Docker failed to start"
@@ -87,6 +93,8 @@ repair_all_services() {
         echo "    Starting php-fpm..."
         if [[ -d /run/systemd/system ]]; then
             systemctl restart "php${FROSTY_PHP_VERSION:-8.3}-fpm" >/dev/null 2>&1
+        elif _frosty_ensure_pm2 >/dev/null 2>&1; then
+            _frosty_pm2_start "php-fpm" "/" "php-fpm${FROSTY_PHP_VERSION:-8.3}" "-F" >/dev/null 2>&1
         else
             "php-fpm${FROSTY_PHP_VERSION:-8.3}" -D >/tmp/frosty_php_fpm_repair.log 2>&1
         fi
@@ -108,6 +116,10 @@ repair_all_services() {
         echo "    Starting nginx..."
         if [[ -d /run/systemd/system ]]; then
             systemctl restart nginx >/dev/null 2>&1
+        elif _frosty_ensure_pm2 >/dev/null 2>&1; then
+            pkill -f "nginx: master process" >/dev/null 2>&1
+            sleep 1
+            _frosty_pm2_start "nginx" "/" "nginx" "-g" "daemon off;" >/dev/null 2>&1
         else
             pkill -f nginx >/dev/null 2>&1
             sleep 1
@@ -143,7 +155,7 @@ repair_all_services() {
                 sleep 3
                 systemctl is-active --quiet wings && _frosty_ok "Wings started" || _frosty_warn "Wings did not start (check config)"
             else
-                if command -v pm2 >/dev/null 2>&1; then
+                if _frosty_ensure_pm2 >/dev/null 2>&1; then
                     _frosty_pm2_start "wings" "/etc/pterodactyl" "/usr/local/bin/wings" >/dev/null 2>&1
                     sleep 2
                     pm2 describe wings 2>/dev/null | grep -q "online" && _frosty_ok "Wings started (pm2)" || _frosty_warn "Wings did not start (check config): pm2 logs wings"
@@ -177,7 +189,7 @@ repair_all_services() {
                 sleep 3
                 systemctl is-active --quiet cloudflared && _frosty_ok "Cloudflare tunnel started" || _frosty_fail "Cloudflare tunnel failed to start"
             else
-                if command -v pm2 >/dev/null 2>&1; then
+                if _frosty_ensure_pm2 >/dev/null 2>&1; then
                     _frosty_pm2_start "cloudflared" "${HOME}" "cloudflared" "tunnel" "run" "--token" "$cf_token" >/dev/null 2>&1
                     sleep 2
                     pm2 describe cloudflared 2>/dev/null | grep -q "online" && _frosty_ok "Cloudflare tunnel started (pm2)" || _frosty_fail "Cloudflare tunnel failed to start: pm2 logs cloudflared"
@@ -188,10 +200,7 @@ repair_all_services() {
         fi
     fi
 
-    # Panel health check + auto-heal — catches a broken PHP boot (bad
-    # service provider, missing extension, mismatched vendor/ deps after
-    # a theme/extension install) that nginx/php-fpm being "up" won't
-    # reveal on their own, since they'll happily return a 500 all day.
+    # Panel health check + auto-heal
     local panel_dir="${FROSTY_PANEL_DIR:-/var/www/pterodactyl}"
     if [[ -f "${panel_dir}/artisan" ]]; then
         local artisan_check
@@ -200,13 +209,6 @@ repair_all_services() {
         if echo "$artisan_check" | grep -q "^Laravel Framework"; then
             _frosty_ok "Panel application boots cleanly ($artisan_check)"
         elif echo "$artisan_check" | grep -qi "extension\|composer.json requires"; then
-            # Most common cause: something ran composer under a DIFFERENT
-            # php binary on this host (this environment has multiple PHP
-            # installs, e.g. a devcontainer-provided php 8.4 alongside the
-            # apt-installed php8.3 Frosty actually configured), leaving
-            # vendor/ built against the wrong PHP's extension set. Re-run
-            # composer explicitly under php8.3 to fix it — same fix
-            # applied by hand earlier in this project's development.
             _frosty_warn "Panel fails to boot — looks like a missing-PHP-extension/composer mismatch, attempting auto-fix"
             "php${FROSTY_PHP_VERSION:-8.3}" artisan down >/dev/null 2>&1
             ( cd "$panel_dir" && COMPOSER_ALLOW_SUPERUSER=1 COMPOSER_MEMORY_LIMIT=-1 timeout 600 \
