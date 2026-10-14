@@ -77,6 +77,16 @@ specs_checker() {
     fi
     echo "  /dev/kvm present: $([[ -e /dev/kvm ]] && echo yes || echo no)"
 
+    echo ""
+    echo -e "${C_CYAN:-}== Deep Server & Provider Detection ==${C_RESET:-}"
+    echo ""
+    if curl -fsSL --max-time 15 https://raw.githubusercontent.com/hopingboyz/linux/main/detect-server.sh -o /tmp/frosty_detect_server.sh 2>/dev/null && [[ -s /tmp/frosty_detect_server.sh ]]; then
+        bash /tmp/frosty_detect_server.sh || _frosty_warn "detect-server.sh exited with a non-zero status"
+        rm -f /tmp/frosty_detect_server.sh
+    else
+        _frosty_warn "Could not download detect-server.sh from GitHub (check network connection)"
+    fi
+
     return 0
 }
 
