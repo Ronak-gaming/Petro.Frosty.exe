@@ -130,7 +130,7 @@ install_vps_stack() {
     _frosty_vps_fix_kvm_perms
 
     load_module "pm2.sh"
-    if ! _frosty_ensure_pm2; then
+    if ! _frosty_ensure_pm2_always; then
         _frosty_fail "pm2 setup failed — VPS instances need pm2 to run persistently in this environment"
         return 1
     fi
@@ -255,7 +255,7 @@ _frosty_vps_launch() {
     fi
 
     load_module "pm2.sh"
-    if ! _frosty_ensure_pm2; then
+    if ! _frosty_ensure_pm2_always; then
         _frosty_fail "pm2 unavailable — cannot start VM '${vm_name}'"
         return 1
     fi
