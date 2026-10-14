@@ -48,7 +48,7 @@ _frosty_ensure_pm2() {
 _frosty_ensure_pm2_always() {
 
     if [[ -n "$(_frosty_pm2_bin)" ]]; then
-        _frosty_ok "pm2 already installed: $("$(_frosty_pm2_bin)" -v 2>/dev/null)"
+        _frosty_ok "pm2 already installed: $("$(_frosty_pm2_bin)" -v 2>/dev/null | tail -n 1)"
         return 0
     fi
 
@@ -68,7 +68,7 @@ _frosty_ensure_pm2_always() {
         fi
         _frosty_ok "Node.js installed: $(node -v)"
     else
-        _frosty_ok "Node.js already present: $(node -v), npm $(npm -v)"
+        _frosty_ok "Node.js already present: $(node -v), npm$(npm -v)"
     fi
 
     echo "    Installing pm2 globally..."
@@ -77,15 +77,10 @@ _frosty_ensure_pm2_always() {
     hash -r 2>/dev/null
     _FROSTY_PM2_BIN_CACHE=""
 
-    # The real fix: don't trust npm's exit code alone — actually verify
-    # pm2 is callable afterward. npm can report success while the
-    # binary isn't yet resolvable in this shell, which is exactly what
-    # was causing every downstream caller (Cloudflare, JTG Panel,
-    # MariaDB, etc.) to silently fail after "pm2 installed" printed.
     local resolved
     resolved="$(_frosty_pm2_bin)"
     if [[ $npm_rc -eq 0 && -n "$resolved" ]]; then
-        _frosty_ok "pm2 installed: $("$resolved" -v 2>/dev/null)"
+        _frosty_ok "pm2 installed: $("$resolved" -v 2>/dev/null | tail -n 1)"
     else
         _frosty_fail "pm2 install failed or isn't callable after install — see /tmp/frosty_pm2_install.log"
         return 1
@@ -137,7 +132,7 @@ _frosty_pm2_start() {
         _frosty_ok "'$name' running under pm2"
         return 0
     else
-        _frosty_fail "'$name' failed to reach online state under pm2 — check: $pm2_bin logs $name"
+        _frosty_fail "'$name' failed to reach online state under pm2 — check: $pm2_bin logs$name"
         return 1
     fi
 }
