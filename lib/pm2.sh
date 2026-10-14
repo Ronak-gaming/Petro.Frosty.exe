@@ -9,8 +9,10 @@ _frosty_pm2_bin() {
     fi
 
     hash -r 2>/dev/null
-    if command -v pm2 >/dev/null 2>&1; then
-        _FROSTY_PM2_BIN_CACHE="$(command -v pm2)"
+    local on_path
+    on_path="$(type -P pm2 2>/dev/null)"
+    if [[ -n "$on_path" ]]; then
+        _FROSTY_PM2_BIN_CACHE="$on_path"
         echo "$_FROSTY_PM2_BIN_CACHE"
         return 0
     fi
@@ -101,7 +103,12 @@ _frosty_pm2_start() {
     local pm2_bin
     pm2_bin="$(_frosty_pm2_bin)"
     if [[ -z "$pm2_bin" ]]; then
-        _frosty_fail "pm2 not available — cannot start '$name'"
+        echo "    pm2 missing — installing automatically..."
+        _frosty_ensure_pm2_always >/dev/null 2>&1
+        pm2_bin="$(_frosty_pm2_bin)"
+    fi
+    if [[ -z "$pm2_bin" ]]; then
+        _frosty_fail "pm2 not available — cannot start '$name'. See /tmp/frosty_pm2_install.log"
         return 1
     fi
 
@@ -162,4 +169,14 @@ _frosty_pm2_resurrect() {
         return 0
     fi
     "$pm2_bin" resurrect >/dev/null 2>&1
+}
+
+# Wrapper: every bare `pm2 ...` call in any Frosty module resolves the
+# real binary by path. Fixes "pm2: command not found" when npm global
+# bin dir is not on PATH. Does not install anything by itself.
+pm2() {
+    local b
+    b="$(_frosty_pm2_bin)"
+    [[ -z "$b" ]] && return 127
+    "$b" "$@"
 }
