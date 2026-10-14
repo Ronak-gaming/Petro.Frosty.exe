@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-# Prints each given line with a brief delay between them, for a
-# cascading "reveal" effect. Purely cosmetic — pass -e style strings
-# exactly as you would to echo -e. Skips the delay entirely if the
-# output isn't a real terminal (e.g. piped/logged), so it never slows
-# down non-interactive runs.
 _frosty_reveal() {
     local delay=0.025
     if [[ ! -t 1 ]]; then delay=0; fi
@@ -40,7 +35,7 @@ show_main_menu() {
 
     local frosty_choice=""
     while [[ -z "$frosty_choice" ]]; do
-        read -rp "  ❄ Select an option [1-6]: " frosty_choice
+        read -erp "  ❄ Select an option [1-6]: " frosty_choice
     done
 
     case "$frosty_choice" in
@@ -48,11 +43,7 @@ show_main_menu() {
         2) load_module "toolbox.sh"; show_toolbox_menu ;;
         3) show_vps_type_menu ;;
         4) load_module "repair.sh"; repair_all_services ;;
-        5)
-            echo ""
-            echo -e "${C_ICE}${C_BOLD}❄ Hypervisor support is coming soon.${C_RESET}"
-            echo -e "${C_YELLOW}Not available yet — check back in a future update.${C_RESET}"
-            ;;
+        5) load_module "hypervisor.sh"; show_hypervisor_menu ;;
         6) echo -e "${C_CYAN}❄ Goodbye.${C_RESET}"; exit 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
@@ -75,12 +66,12 @@ show_vps_type_menu() {
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  ❄ Select an option [1-3]: " vt_choice
+    read -erp "  ❄ Select an option [1-3]: " vt_choice
 
     case "$vt_choice" in
         1) load_module "vps.sh"; show_vps_kvm_menu ;;
         2) load_module "vps_docker.sh"; show_vps_docker_menu ;;
-        4) return 0 ;;
+        3) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 }
@@ -97,11 +88,11 @@ show_hypervisor_menu() {
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  ❄ Select an option [1-2]: " hv_choice
+    read -erp "  ❄ Select an option [1-2]: " hv_choice
 
     case "$hv_choice" in
         1) show_proxmox_menu ;;
-        3) return 0 ;;
+        2) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 }
@@ -120,7 +111,7 @@ show_panels_menu() {
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  ❄ Select an option [1-4]: " panels_choice
+    read -erp "  ❄ Select an option [1-4]: " panels_choice
 
     case "$panels_choice" in
         1) show_pterodactyl_menu ;;
@@ -145,7 +136,7 @@ show_pterodactyl_menu() {
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  ❄ Select an option [1-4]: " pty_choice
+    read -erp "  ❄ Select an option [1-4]: " pty_choice
 
     case "$pty_choice" in
         1) run_panel_flow ;;
@@ -259,7 +250,7 @@ run_wings_flow() {
 
     echo ""
     echo -e "${C_CYAN}== Wings Domain ==${C_RESET}"
-    read -rp "  Enter the FQDN you want Wings to use (e.g. wings.yourdomain.com): " wings_fqdn
+    read -erp "  Enter the FQDN you want Wings to use (e.g. wings.yourdomain.com): " wings_fqdn
     if [[ -z "$wings_fqdn" ]]; then
         _frosty_fail "No FQDN entered"
         return 1
