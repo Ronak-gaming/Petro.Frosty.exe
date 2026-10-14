@@ -6,16 +6,14 @@ specs_checker() {
     echo -e "${C_CYAN:-}== Specs Checker ==${C_RESET:-}"
     echo ""
 
-    echo "    Updating and upgrading system..."
-    apt update -y >/tmp/frosty_specs_apt.log 2>&1
-    apt upgrade -y >>/tmp/frosty_specs_apt.log 2>&1
-    _frosty_ok "System updated"
-
-    echo "    Installing fetch tool..."
-    if apt-cache show neofetch >/dev/null 2>&1; then
-        apt install -y neofetch >>/tmp/frosty_specs_apt.log 2>&1
-    elif apt-cache show screenfetch >/dev/null 2>&1; then
-        apt install -y screenfetch >>/tmp/frosty_specs_apt.log 2>&1
+    if ! command -v neofetch >/dev/null 2>&1 && ! command -v screenfetch >/dev/null 2>&1; then
+        echo "    Installing system info fetch tool..."
+        DEBIAN_FRONTEND=noninteractive apt-get update -y >/tmp/frosty_specs_apt.log 2>&1
+        if apt-cache show neofetch >/dev/null 2>&1; then
+            DEBIAN_FRONTEND=noninteractive apt-get install -y neofetch >>/tmp/frosty_specs_apt.log 2>&1
+        elif apt-cache show screenfetch >/dev/null 2>&1; then
+            DEBIAN_FRONTEND=noninteractive apt-get install -y screenfetch >>/tmp/frosty_specs_apt.log 2>&1
+        fi
     fi
 
     echo ""
@@ -95,7 +93,7 @@ show_toolbox_menu() {
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-3]: " tb_choice
+    read -erp "  Select an option [1-3]: " tb_choice
 
     case "$tb_choice" in
         1) load_module "cloudflare.sh"; run_cloudflare_flow ;;
