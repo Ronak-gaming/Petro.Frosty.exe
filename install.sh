@@ -7,11 +7,10 @@
 set -uo pipefail
 
 # Ensure /usr/local/bin and sbin directories are ALWAYS on PATH
-# (stripped containers often omit /usr/local/bin, breaking cloudflared/wings/composer)
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 
 FROSTY_RAW_BASE="https://raw.githubusercontent.com/Ronak-gaming/Petro.Frosty.exe/main"
-FROSTY_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FROSTY_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")" 2>/dev/null && pwd || pwd)"
 
 # ---- Colors ----
 C_CYAN='\e[38;5;51m'
@@ -26,13 +25,24 @@ C_YELLOW='\e[38;5;220m'
 C_RED='\e[38;5;196m'
 C_WHITE='\e[38;5;255m'
 
-# ---- Load lib modules (works both locally and via curl|bash) ----
+# ---- Load lib modules (works locally, in /opt/frosty, and via curl|bash) ----
 load_module() {
     local name="$1"
     if [[ -f "${FROSTY_SCRIPT_DIR}/lib/${name}" ]]; then
         source "${FROSTY_SCRIPT_DIR}/lib/${name}"
+    elif [[ -f "/opt/frosty/lib/${name}" ]]; then
+        source "/opt/frosty/lib/${name}"
+    elif [[ -f "./lib/${name}" ]]; then
+        source "./lib/${name}"
     else
-        source <(curl -fsSL "${FROSTY_RAW_BASE}/lib/${name}?t=$(date +%s)")
+        local tmp_mod="/tmp/frosty_mod_${name}"
+        if curl -fsSL "${FROSTY_RAW_BASE}/lib/${name}?t=$(date +%s)" -o "$tmp_mod" 2>/dev/null && [[ -s "$tmp_mod" ]]; then
+            sed -i 's/\xc2\xa0/ /g; s/\r$//' "$tmp_mod" 2>/dev/null || true
+            source "$tmp_mod"
+        else
+            echo -e "${C_RED}[✗] Failed to load module: ${name}${C_RESET}"
+            return 1
+        fi
     fi
 }
 
