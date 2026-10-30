@@ -1,8 +1,9 @@
-cat > lib/cloudflare.sh << 'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
 
-FROSTY_CF_MARKER="${HOME}/.frosty_cloudflare_configured"
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+
+FROSTY_CF_MARKER="${HOME:-/root}/.frosty_cloudflare_configured"
 FROSTY_CF_BIN="/usr/local/bin/cloudflared"
 
 _frosty_cf_bin() {
@@ -49,7 +50,6 @@ install_cloudflared() {
         hash -r 2>/dev/null || true
     fi
 
-    # If the direct binary download failed or isn't executable, try the official .deb package
     if [[ -z "$(_frosty_cf_bin)" ]]; then
         _frosty_warn "Direct binary check failed — trying cloudflared .deb package..."
         if curl -fL --retry 2 --connect-timeout 15 -o /tmp/cloudflared.deb \
@@ -97,7 +97,6 @@ connect_cloudflare_token() {
     echo ""
     read -rp "  Paste your Cloudflare Tunnel token: " cf_token
 
-    # Extract only the eyJ... JWT token in case the user pasted the full command or spaces
     cf_token="$(echo "$cf_token" | grep -oE 'eyJ[A-Za-z0-9_-]+' | head -1)"
 
     if [[ -z "$cf_token" ]]; then
@@ -105,7 +104,6 @@ connect_cloudflare_token() {
         return 1
     fi
 
-    # Clean up any previous systemd or pm2 instances
     if [[ -d /run/systemd/system ]] && command -v systemctl >/dev/null 2>&1; then
         systemctl stop cloudflared >/dev/null 2>&1 || true
         "$cf_bin" service uninstall >/dev/null 2>&1 || true
@@ -119,7 +117,6 @@ connect_cloudflare_token() {
     echo "    Installing tunnel service..."
     local started_ok=0
 
-    # Only try systemd if PID 1 is actually systemd (not a container with a mounted /run/systemd/system)
     if [[ -d /run/systemd/system ]] && [[ "$(ps -p 1 -o comm= 2>/dev/null)" == "systemd" ]]; then
         if "$cf_bin" service install "$cf_token" >/tmp/frosty_cf_install.log 2>&1; then
             systemctl enable cloudflared >/dev/null 2>&1 || true
@@ -240,5 +237,3 @@ show_cloudflare_submenu() {
     echo ""
     read -rp "  Press Enter to continue..." _
 }
-EOF
-sed -i 's/\xc2\xa0/ /g; s/\r$//' lib/cloudflare.sh
