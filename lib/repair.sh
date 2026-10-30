@@ -108,22 +108,29 @@ repair_all_services() {
     fi
 
     # nginx
+   # nginx
+    if ! command -v nginx >/dev/null 2>&1; then
+        echo "    Nginx not found — installing Nginx..."
+        DEBIAN_FRONTEND=noninteractive apt-get update -y >/tmp/frosty_nginx_repair.log 2>&1
+        DEBIAN_FRONTEND=noninteractive apt-get install -y nginx >>/tmp/frosty_nginx_repair.log 2>&1
+    fi
+
     local nginx_check
     nginx_check="$(curl -s -o /dev/null -w '%{http_code}' http://localhost/ 2>/dev/null)"
     if [[ "$nginx_check" != "000" ]]; then
         _frosty_ok "nginx already responding (HTTP $nginx_check)"
     else
         echo "    Starting nginx..."
-        if [[ -d /run/systemd/system ]]; then
-            systemctl restart nginx >/dev/null 2>&1
+        if [[ -d /run/systemd/system ]] && [[ "$(ps -p 1 -o comm= 2>/dev/null)" == "systemd" ]]; then
+            systemctl restart nginx >/dev/null 2>&1 || service nginx restart >/dev/null 2>&1
         elif _frosty_ensure_pm2 >/dev/null 2>&1; then
-            pkill -f "nginx: master process" >/dev/null 2>&1
+            pkill -f "nginx: master process" >/dev/null 2>&1 || true
             sleep 1
             _frosty_pm2_start "nginx" "/" "nginx" "-g" "daemon off;" >/dev/null 2>&1
         else
-            pkill -f nginx >/dev/null 2>&1
+            pkill -f nginx >/dev/null 2>&1 || true
             sleep 1
-            nginx >/tmp/frosty_nginx_repair.log 2>&1
+            nginx >/tmp/frosty_nginx_repair.log 2>&1 || true
         fi
         sleep 2
         nginx_check="$(curl -s -o /dev/null -w '%{http_code}' http://localhost/ 2>/dev/null)"
@@ -131,7 +138,7 @@ repair_all_services() {
             _frosty_ok "nginx started (HTTP $nginx_check)"
         else
             _frosty_fail "nginx failed to start — see /tmp/frosty_nginx_repair.log"
-            nginx -t 2>&1 | tail -10
+            nginx -t 2>&1 | tail -10 || true
         fi
     fi
 
