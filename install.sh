@@ -6,6 +6,10 @@
 
 set -uo pipefail
 
+# Ensure /usr/local/bin and sbin directories are ALWAYS on PATH
+# (stripped containers often omit /usr/local/bin, breaking cloudflared/wings/composer)
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+
 FROSTY_RAW_BASE="https://raw.githubusercontent.com/Ronak-gaming/Petro.Frosty.exe/main"
 FROSTY_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -28,7 +32,7 @@ load_module() {
     if [[ -f "${FROSTY_SCRIPT_DIR}/lib/${name}" ]]; then
         source "${FROSTY_SCRIPT_DIR}/lib/${name}"
     else
-        source <(curl -fsSL "${FROSTY_RAW_BASE}/lib/${name}")
+        source <(curl -fsSL "${FROSTY_RAW_BASE}/lib/${name}?t=$(date +%s)")
     fi
 }
 
@@ -40,12 +44,13 @@ print_banner() {
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}          ${C_PURPLE}${C_BOLD}❄  ALL-IN-ONE INSTALLER  ❄${C_RESET}          ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}              ${C_CYAN}❄${C_RESET} ${C_ICE}❄${C_RESET} ${C_BLUE}❄${C_RESET} ${C_PURPLE}❄${C_RESET} ${C_CYAN}❄${C_RESET} ${C_ICE}❄${C_RESET} ${C_BLUE}❄${C_RESET} ${C_PURPLE}❄${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}              ${C_CYAN}❄${C_RESET} ${C_ICE}❄${C_RESET} ${C_BLUE}❄${C_RESET} ${C_PURPLE}❄${C_RESET} ${C_CYAN}❄${C_RESET} ${C_ICE}❄${C_RESET} ${C_BLUE}❄${C_RESET} ${C_PURPLE}❄${C_RESET}              ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}    ${C_CYAN}Created${C_RESET} ${C_WHITE}and${C_RESET} ${C_ICE}maintained${C_RESET} ${C_WHITE}by${C_RESET} ${C_PURPLE}${C_BOLD}Ronak${C_RESET} ${C_BLUE}${C_BOLD}Gaming${C_RESET}   ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
 }
+
 # ---- Simple loading/flicker animation ----
 frosty_spinner() {
     local msg="$1"
@@ -80,6 +85,7 @@ detect_system() {
     FROSTY_ARCH="$(uname -m)"
     FROSTY_KERNEL="$(uname -r)"
     FROSTY_IPV4="$(curl -s -4 --max-time 5 https://api.ipify.org || echo "unknown")"
+    export FROSTY_PUBLIC_IP="$FROSTY_IPV4"
 
     echo "  OS:           $FROSTY_OS_NAME"
     echo "  Architecture: $FROSTY_ARCH"
