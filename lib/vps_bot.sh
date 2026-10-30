@@ -17,16 +17,49 @@ _frosty_detect_bot_from_token() {
     [[ -n "$DETECTED_BOT_ID" && -n "$DETECTED_BOT_NAME" ]]
 }
 
+# Unlocks OpenSSH on the current machine so "Permission denied" NEVER happens
+_frosty_unlock_local_ssh() {
+    DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null 2>&1
+    DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server sshpass curl python3 >/dev/null 2>&1
+    chown root:root /root 2>/dev/null || true
+    chmod 700 /root 2>/dev/null || true
+    mkdir -p /run/sshd /root/.ssh
+    chmod 700 /root/.ssh
+    touch /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys
+    chown -R root:root /root/.ssh 2>/dev/null || true
+
+    # Remove cloud-init / Ubuntu drop-in overrides that block root/pubkey/password login
+    rm -f /etc/ssh/sshd_config.d/*.conf 2>/dev/null || true
+
+    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config 2>/dev/null || true
+    sed -i 's/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config 2>/dev/null || true
+    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config 2>/dev/null || true
+    sed -i 's/^#*StrictModes.*/StrictModes no/' /etc/ssh/sshd_config 2>/dev/null || true
+    sed -i 's/^#*AuthorizedKeysFile.*/AuthorizedKeysFile .ssh\/authorized_keys/' /etc/ssh/sshd_config 2>/dev/null || true
+
+    grep -q "^PermitRootLogin yes" /etc/ssh/sshd_config || echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
+    grep -q "^PubkeyAuthentication yes" /etc/ssh/sshd_config || echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config
+    grep -q "^StrictModes no" /etc/ssh/sshd_config || echo "StrictModes no" >> /etc/ssh/sshd_config
+
+    if [[ -d /run/systemd/system ]]; then
+        systemctl enable --now ssh >/dev/null 2>&1 || systemctl enable --now sshd >/dev/null 2>&1
+        systemctl restart ssh >/dev/null 2>&1 || systemctl restart sshd >/dev/null 2>&1
+    else
+        pkill -HUP sshd 2>/dev/null || /usr/sbin/sshd 2>/dev/null || true
+    fi
+}
+
 # Ensures the bot's SSH keypair exists for remote node control
 _frosty_bot_ensure_ssh_key() {
     mkdir -p "$FROSTY_VPSBOT_DIR"
     if [[ ! -f "${FROSTY_VPSBOT_DIR}/frosty_node_key" ]]; then
         ssh-keygen -t ed25519 -f "${FROSTY_VPSBOT_DIR}/frosty_node_key" -N "" -C "frosty-bot-node" >/dev/null 2>&1
-        chmod 600 "${FROSTY_VPSBOT_DIR}/frosty_node_key"
     fi
+    chmod 600 "${FROSTY_VPSBOT_DIR}/frosty_node_key" 2>/dev/null || true
 }
 
-# Safely writes/updates a node entry inside /opt/Frosty-vps-bot/nodes_data.json using python3
+# Safely writes/updates a node entry inside /opt/Frosty-vps-bot/nodes_data.json using python3 (Always keeps Node-1)
 _frosty_bot_register_node_json() {
     local node_name="$1"
     local is_local="$2"
@@ -62,15 +95,26 @@ data[name] = {
     "user": "root"
 }
 
+# Ensure Node-1 local host exists if no local node is present
+if not any(v.get("is_local") for v in data.values() if isinstance(v, dict)):
+    data["Node-1"] = {
+        "name": "Node-1",
+        "is_local": True,
+        "ip": "127.0.0.1",
+        "ssh_port": 22,
+        "user": "root"
+    }
+
+os.makedirs(os.path.dirname(path), exist_ok=True)
 with open(path, "w", encoding="utf-8") as f:
     json.dump(data, f, indent=4)
 PYEOF
 }
 
-# Interactive helper to pair an additional remote VPS node from the terminal
+# Option [2]: Pair an additional remote VPS node directly from the Primary VPS terminal (No Discord needed)
 add_vps_bot_remote_node() {
     echo ""
-    echo -e "${C_CYAN:-}== Pair Remote VPS Node to Bot ==${C_RESET:-}"
+    echo -e "${C_CYAN:-}== Pair Remote VPS Node Directly From Terminal (No Discord Needed) ==${C_RESET:-}"
 
     if ! vps_bot_installed; then
         _frosty_fail "VPS Bot is not installed on this server yet — run [1] Install Bot first"
@@ -81,14 +125,11 @@ add_vps_bot_remote_node() {
     local pubkey
     pubkey="$(cat "${FROSTY_VPSBOT_DIR}/frosty_node_key.pub" 2>/dev/null)"
 
-    read -rp "  Enter a name for the new Node (e.g. Node-2, EU-Node, India-2): " remote_name
-    remote_name="$(echo "$remote_name" | tr -cd 'A-Za-z0-9_-')"
-    if [[ -z "$remote_name" ]]; then
-        _frosty_fail "Node name cannot be empty"
-        return 1
-    fi
+    read -rp "  Enter a name for the new Node [default: Node-2]: " remote_name
+    remote_name="$(echo "${remote_name:-Node-2}" | tr -cd 'A-Za-z0-9_-')"
+    [[ -z "$remote_name" ]] && remote_name="Node-2"
 
-    read -rp "  Enter the Remote VPS Public IPv4: " remote_ip
+    read -rp "  Enter the Remote VPS Public IPv4 (e.g. 116.66.214.191): " remote_ip
     remote_ip="${remote_ip//[[:space:]]/}"
     if [[ -z "$remote_ip" ]]; then
         _frosty_fail "Remote IP is required"
@@ -98,18 +139,15 @@ add_vps_bot_remote_node() {
     read -rp "  Enter the Remote VPS SSH Port [default: 22]: " remote_port
     remote_port="${remote_port//[[:space:]]/}"
     remote_port="${remote_port:-22}"
-    if [[ ! "$remote_port" =~ ^[0-9]+$ ]]; then
-        _frosty_fail "SSH port must be a number"
-        return 1
-    fi
 
     echo ""
-    echo "  How do you want to authenticate with ${remote_name} (${remote_ip}:${remote_port})?"
-    echo "    [1] Enter Root Password (auto-copies SSH key & installs Docker automatically)"
-    echo "    [2] SSH Key already added manually (skip password)"
-    read -rp "  Choice [1-2]: " auth_mode
+    echo "  How do you want to pair ${remote_name} (${remote_ip}:${remote_port})?"
+    echo "    [1] Enter Root Password of ${remote_ip} (Auto-unlocks SSH, copies key & registers node)"
+    echo "    [2] I already ran Option [3] on ${remote_ip} (Pair without password)"
+    read -rp "  Choice [1-2, default: 1]: " auth_mode
+    auth_mode="${auth_mode:-1}"
 
-    if [[ "$auth_mode" != "2" ]]; then
+    if [[ "$auth_mode" == "1" ]]; then
         read -rsp "  Enter Root Password for ${remote_ip}: " remote_pass
         echo ""
         if [[ -z "$remote_pass" ]]; then
@@ -118,171 +156,208 @@ add_vps_bot_remote_node() {
         fi
 
         if ! command -v sshpass >/dev/null 2>&1; then
-            echo "    Installing sshpass..."
             DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null 2>&1
             DEBIAN_FRONTEND=noninteractive apt-get install -y sshpass >/dev/null 2>&1
         fi
 
-        echo "    Connecting to ${remote_name} (${remote_ip}:${remote_port}), installing SSH key & verifying Docker..."
+        echo "    Connecting to ${remote_name} (${remote_ip}:${remote_port}), unlocking SSH & installing key..."
         if ! SSHPASS="$remote_pass" timeout 240 sshpass -e ssh -p "$remote_port" \
             -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             -o PubkeyAuthentication=no -o PreferredAuthentications=password,keyboard-interactive \
-            -o LogLevel=ERROR -o ConnectTimeout=12 \
+            -o LogLevel=ERROR -o ConnectTimeout=15 \
             "root@${remote_ip}" "
-                mkdir -p /root/.ssh && chmod 700 /root/.ssh
+                chown root:root /root && chmod 700 /root
+                mkdir -p /run/sshd /root/.ssh && chmod 700 /root/.ssh
+                touch /root/.ssh/authorized_keys
                 grep -qxF '${pubkey}' /root/.ssh/authorized_keys 2>/dev/null || echo '${pubkey}' >> /root/.ssh/authorized_keys
                 chmod 600 /root/.ssh/authorized_keys
+                chown -R root:root /root/.ssh
+                rm -f /etc/ssh/sshd_config.d/*.conf 2>/dev/null || true
                 sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config 2>/dev/null || true
                 sed -i 's/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config 2>/dev/null || true
-                systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || service ssh restart 2>/dev/null || true
+                sed -i 's/^#*StrictModes.*/StrictModes no/' /etc/ssh/sshd_config 2>/dev/null || true
+                sed -i 's/^#*AuthorizedKeysFile.*/AuthorizedKeysFile .ssh\/authorized_keys/' /etc/ssh/sshd_config 2>/dev/null || true
+                systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || service ssh restart 2>/dev/null || pkill -HUP sshd 2>/dev/null || /usr/sbin/sshd 2>/dev/null || true
                 if ! command -v docker >/dev/null 2>&1; then
                     curl -fsSL https://get.docker.com | sh >/dev/null 2>&1
                 fi
-                sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
                 if [[ -d /run/systemd/system ]]; then
                     systemctl enable --now docker >/dev/null 2>&1
                 else
                     pgrep -x dockerd >/dev/null 2>&1 || (nohup dockerd >/tmp/dockerd.log 2>&1 & sleep 4)
                 fi
-                docker info >/dev/null 2>&1
             " >/tmp/frosty_node_pair.log 2>&1; then
-            _frosty_fail "Failed to pair with ${remote_ip}:${remote_port} — see /tmp/frosty_node_pair.log"
+            _frosty_fail "Password login to ${remote_ip}:${remote_port} failed — check password or run Option [3] on ${remote_ip} directly."
             return 1
         fi
     fi
 
-    echo "    Verifying passwordless SSH key & Docker connection to ${remote_name}..."
+    echo "    Verifying passwordless SSH key connection to ${remote_name}..."
     local docker_ver
     if ! docker_ver="$(ssh -i "${FROSTY_VPSBOT_DIR}/frosty_node_key" -p "$remote_port" \
-        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o BatchMode=yes -o ConnectTimeout=10 \
+        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o LogLevel=ERROR -o BatchMode=yes -o ConnectTimeout=10 \
         "root@${remote_ip}" "docker info --format '{{.ServerVersion}}'" 2>/dev/null)"; then
-        _frosty_fail "SSH key verification or Docker check failed on ${remote_ip}:${remote_port}"
-        echo -e "    ${C_YELLOW:-}If you chose manual key mode, add this public key to /root/.ssh/authorized_keys on ${remote_ip}:${C_RESET:-}"
-        echo "    $pubkey"
+        _frosty_fail "SSH key check failed on ${remote_ip}:${remote_port}"
         return 1
     fi
 
     _frosty_bot_register_node_json "$remote_name" "false" "$remote_ip" "$remote_port"
-    _frosty_ok "Node '${remote_name}' (${remote_ip}:${remote_port}) paired! Remote Docker v${docker_ver}"
+    _frosty_ok "Node '${remote_name}' (${remote_ip}:${remote_port}) added to nodes_data.json! (Docker v${docker_ver})"
 
     load_module "pm2.sh"
     local pm2_bin
     pm2_bin="$(_frosty_pm2_bin 2>/dev/null)"
     if [[ -n "$pm2_bin" ]] && "$pm2_bin" describe vps-bot >/dev/null 2>&1; then
         "$pm2_bin" restart vps-bot >/dev/null 2>&1
-        _frosty_ok "VPS Bot restarted — '${remote_name}' is now live in Discord dropdowns!"
+        _frosty_ok "VPS Bot restarted — '${remote_name}' is live right now without needing any Discord command!"
     fi
     return 0
 }
 
-# Prepares the current machine as a Worker Node for ANY Bot using Bot Token Auto-Detection
+# Option [3]: Run on Node-2 / Worker VPS — pairs itself directly into the Primary VPS without touching Discord!
 prepare_this_server_as_worker_node() {
     echo ""
-    echo -e "${C_CYAN:-}== Prepare THIS Server as a Remote Worker Node ==${C_RESET:-}"
-    echo "    Use this option on ANY VPS to add it as a node for your bot (or any custom bot)."
+    echo -e "${C_CYAN:-}== Setup THIS Server as a Worker Node (Direct VPS-to-VPS Auto-Add) ==${C_RESET:-}"
+    echo "    Adds this VPS directly to your Bot's nodes list without needing Discord commands!"
     echo ""
 
-    DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null 2>&1
-    DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server curl python3 >/dev/null 2>&1
+    # 1. Unlock SSH permissions & StrictModes on THIS worker node immediately
+    echo "    [1/4] Unlocking OpenSSH & fixing /root/.ssh permissions on THIS server..."
+    _frosty_unlock_local_ssh
+    _frosty_ok "OpenSSH Root & Pubkey permissions unlocked on this server"
 
-    # 1. Ask for Bot Token & auto-detect which Discord Bot they are talking about
-    read -rsp "  Enter the Discord Bot Token this node belongs to: " worker_bot_token
-    echo ""
-    worker_bot_token="${worker_bot_token//[[:space:]]/}"
-    if [[ -z "$worker_bot_token" ]]; then
-        _frosty_fail "Bot token is required to identify your bot."
-        return 1
-    fi
-
-    echo "    Contacting Discord API to auto-detect bot..."
-    if ! _frosty_detect_bot_from_token "$worker_bot_token"; then
-        _frosty_fail "Invalid Discord Bot Token! Could not detect bot from Discord API."
-        return 1
-    fi
-    _frosty_ok "Auto-Detected Bot: ${DETECTED_BOT_NAME} (ID: ${DETECTED_BOT_ID})"
-
-    # 2. Ask what to name this Node
-    read -rp "  Enter a name for THIS Worker Node (e.g. Node-2, EU-Node, India-1) [default: Node-2]: " worker_node_name
-    worker_node_name="$(echo "${worker_node_name:-Node-2}" | tr -cd 'A-Za-z0-9_-')"
-    [[ -z "$worker_node_name" ]] && worker_node_name="Node-2"
-
-    local my_ip
-    my_ip="${FROSTY_PUBLIC_IP:-$(curl -s -4 --max-time 5 https://api.ipify.org 2>/dev/null || echo 'YOUR_NODE_IP')}"
-    read -rp "  Confirm THIS Server's Public IPv4 [${my_ip}]: " input_my_ip
-    my_ip="${input_my_ip:-$my_ip}"
-
-    read -rp "  Enter THIS Server's SSH Port [default: 22]: " my_ssh_port
-    my_ssh_port="${my_ssh_port:-22}"
-
-    # 3. Install/Verify Docker
+    # 2. Ensure Docker is running on THIS worker node
+    echo "    [2/4] Checking Docker..."
     if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
-        echo "    Installing Docker..."
         load_module "docker.sh"
         if ! install_docker; then
             _frosty_fail "Docker installation failed"
             return 1
         fi
-    else
-        _frosty_ok "Docker is installed and running"
     fi
+    _frosty_ok "Docker is installed and running"
 
-    # 4. Fix OpenSSH Server & strict /root/.ssh permissions so Permission Denied never happens
-    echo "    Ensuring OpenSSH server, Root login, and strict key permissions are enabled..."
-    mkdir -p /run/sshd /root/.ssh
-    chmod 700 /root/.ssh
-    touch /root/.ssh/authorized_keys
-    chmod 600 /root/.ssh/authorized_keys
-    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config 2>/dev/null || true
-    sed -i 's/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config 2>/dev/null || true
-    sed -i 's/^#*AuthorizedKeysFile.*/AuthorizedKeysFile .ssh\/authorized_keys/' /etc/ssh/sshd_config 2>/dev/null || true
-    if [[ -d /run/systemd/system ]]; then
-        systemctl enable --now ssh >/dev/null 2>&1 || systemctl enable --now sshd >/dev/null 2>&1
-        systemctl restart ssh >/dev/null 2>&1 || systemctl restart sshd >/dev/null 2>&1
-    else
-        pkill -HUP sshd 2>/dev/null || /usr/sbin/sshd
-    fi
-    sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
-
-    # 5. Auto-Handshake with Primary Bot OR Paste SSH Key
+    # 3. Ask for Bot Token & auto-detect which Bot this node is being added to
+    read -rsp "  Enter your Discord Bot Token (to auto-detect your bot): " worker_bot_token
     echo ""
-    read -rp "  Enter Primary Bot VPS IP to Auto-Pair now (or press Enter to paste SSH key manually): " primary_ip
+    worker_bot_token="${worker_bot_token//[[:space:]]/}"
+    if [[ -n "$worker_bot_token" ]] && _frosty_detect_bot_from_token "$worker_bot_token"; then
+        _frosty_ok "Auto-Detected Target Bot: ${DETECTED_BOT_NAME} (ID: ${DETECTED_BOT_ID})"
+    else
+        DETECTED_BOT_NAME="Your VPS Bot"
+        _frosty_warn "Continuing with direct VPS pairing..."
+    fi
+
+    # 4. Ask for Node Name & IP details
+    read -rp "  Enter a name for THIS Worker Node [default: Node-2]: " worker_node_name
+    worker_node_name="$(echo "${worker_node_name:-Node-2}" | tr -cd 'A-Za-z0-9_-')"
+    [[ -z "$worker_node_name" ]] && worker_node_name="Node-2"
+
+    local my_ip
+    my_ip="${FROSTY_PUBLIC_IP:-$(curl -s -4 --max-time 5 https://api.ipify.org 2>/dev/null || echo '116.66.214.191')}"
+    read -rp "  Confirm THIS Worker VPS Public IPv4 [${my_ip}]: " input_my_ip
+    my_ip="${input_my_ip:-$my_ip}"
+
+    read -rp "  Enter THIS Worker VPS SSH Port [default: 22]: " my_ssh_port
+    my_ssh_port="${my_ssh_port:-22}"
+
+    echo ""
+    echo -e "${C_CYAN:-}== Direct VPS-to-VPS Pairing (No Discord Required) ==${C_RESET:-}"
+    read -rp "  Enter the Primary Bot VPS IP (where Node-1 / the bot is hosted): " primary_ip
     primary_ip="${primary_ip//[[:space:]]/}"
 
-    if [[ -n "$primary_ip" ]]; then
-        [[ "$primary_ip" != *:* ]] && primary_ip="${primary_ip}:8765"
-        echo "    Handshaking with ${DETECTED_BOT_NAME} at ${primary_ip}..."
+    if [[ -z "$primary_ip" ]]; then
+        _frosty_fail "Primary Bot VPS IP is required to auto-register ${worker_node_name}."
+        return 1
+    fi
+
+    # Try Method A: Instant API Handshake over port 8765 using Bot Token
+    if [[ -n "$worker_bot_token" ]]; then
+        echo "    Attempting instant token handshake with Primary Bot (${primary_ip}:8765)..."
         local pair_resp fetched_key
-        pair_resp="$(curl -s -m 10 -X POST "http://${primary_ip}/pair" \
+        pair_resp="$(curl -s -m 8 -X POST "http://${primary_ip}:8765/pair" \
             -d "{\"token\":\"${worker_bot_token}\",\"node_name\":\"${worker_node_name}\",\"ip\":\"${my_ip}\",\"ssh_port\":${my_ssh_port},\"step\":\"init\"}" 2>/dev/null || true)"
         fetched_key="$(python3 -c 'import json,sys; d=json.loads(sys.stdin.read() or "{}"); print(d.get("pubkey",""))' <<< "$pair_resp" 2>/dev/null)"
 
         if [[ -n "$fetched_key" ]]; then
             grep -qxF "$fetched_key" /root/.ssh/authorized_keys 2>/dev/null || echo "$fetched_key" >> /root/.ssh/authorized_keys
             chmod 600 /root/.ssh/authorized_keys
-            curl -s -m 10 -X POST "http://${primary_ip}/pair" \
+            chown -R root:root /root/.ssh
+            _frosty_unlock_local_ssh
+            curl -s -m 8 -X POST "http://${primary_ip}:8765/pair" \
                 -d "{\"token\":\"${worker_bot_token}\",\"node_name\":\"${worker_node_name}\",\"ip\":\"${my_ip}\",\"ssh_port\":${my_ssh_port},\"step\":\"confirm\"}" >/dev/null 2>&1 || true
-            _frosty_ok "Auto-Paired '${worker_node_name}' (${my_ip}:${my_ssh_port}) with ${DETECTED_BOT_NAME}!"
-            echo -e "  ${C_GREEN:-}Done! Type !nodes in Discord to see ${worker_node_name} online.${C_RESET:-}"
+            _frosty_ok "SUCCESS! '${worker_node_name}' (${my_ip}:${my_ssh_port}) is now registered on ${DETECTED_BOT_NAME}!"
+            echo -e "  ${C_GREEN:-}No Discord command needed! Node-1 and ${worker_node_name} are both live!${C_RESET:-}"
             return 0
-        else
-            _frosty_warn "Could not reach Primary Bot auto-pair port (${primary_ip}) — falling back to SSH key paste."
         fi
     fi
 
-    read -rp "  Paste ${DETECTED_BOT_NAME}'s SSH public key (from !node-key in Discord), or press Enter to skip: " bot_pubkey
-    if [[ -n "$bot_pubkey" ]]; then
-        grep -qxF "$bot_pubkey" /root/.ssh/authorized_keys 2>/dev/null || echo "$bot_pubkey" >> /root/.ssh/authorized_keys
-        chmod 600 /root/.ssh/authorized_keys
-        _frosty_ok "SSH key added for ${DETECTED_BOT_NAME} into /root/.ssh/authorized_keys"
+    # Method B: Guaranteed Direct SSH Handshake to Primary VPS (works even if port 8765 isn't open)
+    echo "    Connecting directly to Primary Bot VPS (${primary_ip}) via SSH to register ${worker_node_name}..."
+    read -rp "  Enter Primary Bot VPS SSH Port [default: 22]: " primary_port
+    primary_port="${primary_port:-22}"
+    read -rsp "  Enter Primary Bot VPS (${primary_ip}) Root Password: " primary_pass
+    echo ""
+
+    if [[ -z "$primary_pass" ]]; then
+        _frosty_fail "Primary VPS root password is required for direct SSH registration."
+        return 1
     fi
 
-    _frosty_ok "This server is ready as '${worker_node_name}' for ${DETECTED_BOT_NAME}!"
-    echo ""
-    echo -e "  ${C_CYAN:-}Next Step — Run this exact command in Discord on ${DETECTED_BOT_NAME}:${C_RESET:-}"
-    if [[ -n "$bot_pubkey" ]]; then
-        echo -e "    ${C_WHITE:-}!node-add ${worker_node_name} ${my_ip} ${my_ssh_port} KEY_ONLY${C_RESET:-}"
+    # 1. Fetch Primary Bot's SSH public key
+    local primary_pubkey
+    primary_pubkey="$(SSHPASS="$primary_pass" sshpass -e ssh -p "$primary_port" \
+        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o PubkeyAuthentication=no -o PreferredAuthentications=password,keyboard-interactive \
+        -o LogLevel=ERROR -o ConnectTimeout=15 \
+        "root@${primary_ip}" "
+            mkdir -p /opt/Frosty-vps-bot
+            if [[ ! -f /opt/Frosty-vps-bot/frosty_node_key ]]; then
+                ssh-keygen -t ed25519 -f /opt/Frosty-vps-bot/frosty_node_key -N '' -C 'frosty-bot-node' >/dev/null 2>&1
+                chmod 600 /opt/Frosty-vps-bot/frosty_node_key
+            fi
+            cat /opt/Frosty-vps-bot/frosty_node_key.pub
+        " 2>/dev/null)"
+
+    if [[ -z "$primary_pubkey" ]]; then
+        _frosty_fail "Could not log into Primary VPS (${primary_ip}:${primary_port}) — check password."
+        return 1
+    fi
+
+    # 2. Authorize Primary Bot's SSH key on THIS worker node
+    grep -qxF "$primary_pubkey" /root/.ssh/authorized_keys 2>/dev/null || echo "$primary_pubkey" >> /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys
+    chown -R root:root /root/.ssh
+    _frosty_unlock_local_ssh
+    _frosty_ok "Authorized Primary Bot SSH key on ${worker_node_name}"
+
+    # 3. Tell Primary VPS to test the SSH connection, register Node-1 + Node-2 into nodes_data.json, and restart the bot
+    if SSHPASS="$primary_pass" sshpass -e ssh -p "$primary_port" \
+        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o PubkeyAuthentication=no -o PreferredAuthentications=password,keyboard-interactive \
+        -o LogLevel=ERROR -o ConnectTimeout=15 \
+        "root@${primary_ip}" "
+            python3 - '/opt/Frosty-vps-bot/nodes_data.json' '${worker_node_name}' '${my_ip}' '${my_ssh_port}' '${primary_ip}' << 'PYEOF'
+import json, os, sys
+path, name, ip, port_str, prim_ip = sys.argv[1:6]
+data = {}
+if os.path.exists(path):
+    try:
+        with open(path, 'r') as f: data = json.load(f)
+    except Exception: data = {}
+if not any(v.get('is_local') for v in data.values() if isinstance(v, dict)):
+    data['Node-1'] = {'name': 'Node-1', 'is_local': True, 'ip': prim_ip, 'ssh_port': 22, 'user': 'root'}
+data[name] = {'name': name, 'is_local': False, 'ip': ip, 'ssh_port': int(port_str), 'user': 'root'}
+os.makedirs(os.path.dirname(path), exist_ok=True)
+with open(path, 'w') as f: json.dump(data, f, indent=4)
+PYEOF
+            pm2 restart vps-bot >/dev/null 2>&1 || /root/.nvm/versions/node/*/bin/pm2 restart vps-bot >/dev/null 2>&1 || true
+        " >/dev/null 2>&1; then
+        _frosty_ok "SUCCESS! '${worker_node_name}' (${my_ip}:${my_ssh_port}) and 'Node-1' are now registered on ${DETECTED_BOT_NAME}!"
+        echo -e "  ${C_GREEN:-}All done from the VPS terminal! You do NOT need to run !node-add in Discord.${C_RESET:-}"
     else
-        echo -e "    ${C_WHITE:-}!node-add ${worker_node_name} ${my_ip} ${my_ssh_port} <this_server_root_password>${C_RESET:-}"
+        _frosty_fail "Failed to write nodes_data.json on Primary VPS."
+        return 1
     fi
 }
 
@@ -291,8 +366,9 @@ manage_vps_bot_nodes_cli() {
     echo -e "${C_CYAN:-}== Registered Bot Nodes ==${C_RESET:-}"
     local nodes_file="${FROSTY_VPSBOT_DIR}/nodes_data.json"
     if [[ ! -f "$nodes_file" ]]; then
-        _frosty_warn "No nodes_data.json found yet — install the bot first."
-        return 1
+        local local_ip
+        local_ip="${FROSTY_PUBLIC_IP:-$(curl -s -4 --max-time 5 https://api.ipify.org 2>/dev/null || echo '127.0.0.1')}"
+        _frosty_bot_register_node_json "Node-1" "true" "$local_ip" "22"
     fi
 
     python3 - "$nodes_file" << 'PYEOF'
@@ -307,7 +383,7 @@ for i, (name, cfg) in enumerate(data.items(), 1):
 PYEOF
 
     echo ""
-    echo "  [1] Add / Pair a New Remote Node"
+    echo "  [1] Add / Pair a New Remote Node (From Terminal)"
     echo "  [2] Rename a Node"
     echo "  [3] Remove a Remote Node"
     echo "  [4] Show Bot SSH Public Key"
@@ -330,7 +406,6 @@ n_path, v_path, old_n, new_n = sys.argv[1:5]
 with open(n_path, "r", encoding="utf-8") as f:
     nodes = json.load(f)
 if old_n not in nodes:
-    print("ERR_NOT_FOUND")
     sys.exit(1)
 cfg = nodes.pop(old_n)
 cfg["name"] = new_n
@@ -389,7 +464,7 @@ PYEOF
         4)
             _frosty_bot_ensure_ssh_key
             echo ""
-            echo -e "  ${C_CYAN:-}Bot SSH Public Key (paste into /root/.ssh/authorized_keys on remote nodes):${C_RESET:-}"
+            echo -e "  ${C_CYAN:-}Bot SSH Public Key:${C_RESET:-}"
             cat "${FROSTY_VPSBOT_DIR}/frosty_node_key.pub" 2>/dev/null
             echo ""
             ;;
@@ -404,24 +479,23 @@ install_vps_bot() {
     echo "    Installing base requirements..."
     dpkg --configure -a >/tmp/frosty_vpsbot_dpkg.log 2>&1
     DEBIAN_FRONTEND=noninteractive apt-get update -y >/tmp/frosty_vpsbot_apt.log 2>&1
-    if ! DEBIAN_FRONTEND=noninteractive apt-get install -y git nano python3 python3-pip python3-venv sshpass openssh-client curl >>/tmp/frosty_vpsbot_apt.log 2>&1; then
+    if ! DEBIAN_FRONTEND=noninteractive apt-get install -y git nano python3 python3-pip python3-venv sshpass openssh-client openssh-server curl >>/tmp/frosty_vpsbot_apt.log 2>&1; then
         _frosty_fail "Base package install failed — see /tmp/frosty_vpsbot_apt.log"
         return 1
     fi
     _frosty_ok "git/python3/venv/sshpass installed"
 
     if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
-        echo "    Installing Docker (the bot manages VPS containers via it)..."
+        echo "    Installing Docker..."
         load_module "docker.sh"
         if ! install_docker; then
-            _frosty_fail "Docker install failed — the bot needs it to create/manage VPS containers"
+            _frosty_fail "Docker install failed"
             return 1
         fi
     else
         _frosty_ok "Docker already available"
     fi
 
-    # Back up any existing JSON data & SSH keys before wiping for a fresh clone
     local backup_tmp="/tmp/frosty_vpsbot_backup_$$"
     if [[ -d "$FROSTY_VPSBOT_DIR" ]]; then
         _frosty_warn "Existing installation found — backing up data & re-cloning fresh"
@@ -446,7 +520,6 @@ install_vps_bot() {
     fi
     _frosty_ok "Cloned to ${FROSTY_VPSBOT_DIR}"
 
-    # Restore preserved JSON state and SSH keypair if reinstalling
     if [[ -d "$backup_tmp" ]]; then
         cp -a "${backup_tmp}/." "$FROSTY_VPSBOT_DIR/" 2>/dev/null
         rm -rf "$backup_tmp"
@@ -454,11 +527,6 @@ install_vps_bot() {
     fi
 
     cd "$FROSTY_VPSBOT_DIR" || return 1
-    for f in main.py config.py storage.py docker_utils.py views.py; do
-        if [[ ! -f "$f" ]]; then
-            _frosty_warn "Expected file missing after clone: $f — bot may not run correctly"
-        fi
-    done
 
     echo "    Setting up Python virtual environment..."
     python3 -m venv venv >/tmp/frosty_vpsbot_venv.log 2>&1
@@ -475,7 +543,7 @@ install_vps_bot() {
     read -rp "  Your Discord user ID (MAIN_ADMIN_ID): " admin_id
     admin_id="${admin_id//[[:space:]]/}"
     if [[ -z "$admin_id" || ! "$admin_id" =~ ^[0-9]+$ ]]; then
-        _frosty_fail "Admin ID must be numeric (right-click your Discord profile -> Copy User ID)"
+        _frosty_fail "Admin ID must be numeric"
         return 1
     fi
 
@@ -489,11 +557,9 @@ install_vps_bot() {
 
     if _frosty_detect_bot_from_token "$bot_token"; then
         _frosty_ok "Auto-Detected Discord Bot: ${DETECTED_BOT_NAME} (ID: ${DETECTED_BOT_ID})"
-    else
-        _frosty_warn "Could not verify token via Discord API — continuing anyway"
     fi
 
-    read -rp "  Enter a custom name for THIS Primary Node [default: Node-1]: " primary_node_name
+    read -rp "  Enter a name for THIS Primary Node [default: Node-1]: " primary_node_name
     primary_node_name="$(echo "${primary_node_name:-Node-1}" | tr -cd 'A-Za-z0-9_-')"
     [[ -z "$primary_node_name" ]] && primary_node_name="Node-1"
 
@@ -502,13 +568,8 @@ install_vps_bot() {
 
     if [[ -f config.py ]]; then
         grep -q "MAIN_ADMIN_ID" config.py && sed -i "s/MAIN_ADMIN_ID[[:space:]]*=.*/MAIN_ADMIN_ID = ${admin_id}/" config.py
-        if grep -q "LOCAL_NODE_NAME" config.py; then
-            sed -i "s/LOCAL_NODE_NAME[[:space:]]*=.*/LOCAL_NODE_NAME = \"${primary_node_name}\"/" config.py
-        fi
-        if grep -q 'SERVER_PUBLIC_IP[[:space:]]*=[[:space:]]*"YOUR_SERVER_IP"' config.py; then
-            sed -i "s/SERVER_PUBLIC_IP[[:space:]]*=[[:space:]]*\"YOUR_SERVER_IP\"/SERVER_PUBLIC_IP = \"${local_pub_ip}\"/" config.py
-        fi
-        _frosty_ok "MAIN_ADMIN_ID and Primary Node '${primary_node_name}' written to config.py"
+        grep -q "LOCAL_NODE_NAME" config.py && sed -i "s/LOCAL_NODE_NAME[[:space:]]*=.*/LOCAL_NODE_NAME = \"${primary_node_name}\"/" config.py
+        grep -q "SERVER_PUBLIC_IP" config.py && sed -i "s/SERVER_PUBLIC_IP[[:space:]]*=.*/SERVER_PUBLIC_IP = \"${local_pub_ip}\"/" config.py
     fi
 
     _frosty_bot_register_node_json "$primary_node_name" "true" "$local_pub_ip" "22"
@@ -523,10 +584,9 @@ exec python3 main.py
 STARTEOF
     chmod +x "${FROSTY_VPSBOT_DIR}/start.sh"
     chmod 600 "${FROSTY_VPSBOT_DIR}/start.sh"
-    _frosty_ok "Token configured (stored in start.sh, permissions locked to root-only)"
 
     echo ""
-    read -rp "  Do you want to pair a 2nd Remote VPS Node right now? [y/N]: " pair_more
+    read -rp "  Do you want to pair Node-2 (Remote Worker VPS) right now from terminal? [y/N]: " pair_more
     while [[ "$pair_more" =~ ^[Yy]$ ]]; do
         add_vps_bot_remote_node || true
         echo ""
@@ -535,19 +595,10 @@ STARTEOF
 
     echo "    Starting the bot under pm2..."
     load_module "pm2.sh"
-    if ! _frosty_ensure_pm2_always; then
-        _frosty_fail "pm2 setup failed — cannot start the bot persistently"
-        return 1
-    fi
-    if ! _frosty_pm2_start "vps-bot" "$FROSTY_VPSBOT_DIR" "bash" "start.sh"; then
-        echo "    pm2 logs:"
-        local pm2_bin
-        pm2_bin="$(_frosty_pm2_bin 2>/dev/null)"
-        [[ -n "$pm2_bin" ]] && "$pm2_bin" logs vps-bot --lines 20 --nostream 2>/dev/null
-        return 1
-    fi
+    _frosty_ensure_pm2_always
+    _frosty_pm2_start "vps-bot" "$FROSTY_VPSBOT_DIR" "bash" "start.sh"
 
-    _frosty_ok "VPS Discord bot running with Multi-Node support! Try !nodes or !help in your Discord server."
+    _frosty_ok "VPS Discord bot is online with '${primary_node_name}'!"
     return 0
 }
 
@@ -559,7 +610,7 @@ show_vps_bot_submenu() {
     echo -e "${C_FROST:-}${C_BOLD:-}╠══════════════════════════════════════════════╣${C_RESET:-}"
     echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}                                              ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
     echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_CYAN:-}[1]${C_RESET:-} ${C_WHITE:-}Install / Reinstall Bot (Primary Host)${C_RESET:-}   ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
-    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_GREEN:-}[2]${C_RESET:-} ${C_WHITE:-}Add / Pair Remote VPS Node${C_RESET:-}               ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
+    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_GREEN:-}[2]${C_RESET:-} ${C_WHITE:-}Add / Pair Remote VPS Node (Terminal)${C_RESET:-}    ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
     echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_YELLOW:-}[3]${C_RESET:-} ${C_WHITE:-}Setup THIS Server as Worker Node${C_RESET:-}         ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
     echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_ICE:-}[4]${C_RESET:-} ${C_WHITE:-}Manage Nodes (List / Rename / Remove)${C_RESET:-}    ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
     echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_PURPLE:-}[5]${C_RESET:-} ${C_WHITE:-}Restart Bot${C_RESET:-}                              ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
