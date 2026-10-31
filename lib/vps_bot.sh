@@ -29,7 +29,6 @@ _frosty_unlock_local_ssh() {
     chmod 600 /root/.ssh/authorized_keys
     chown -R root:root /root/.ssh 2>/dev/null || true
 
-    # Remove cloud-init / Ubuntu drop-in overrides that block root/pubkey/password login
     rm -f /etc/ssh/sshd_config.d/*.conf 2>/dev/null || true
 
     sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config 2>/dev/null || true
@@ -59,7 +58,7 @@ _frosty_bot_ensure_ssh_key() {
     chmod 600 "${FROSTY_VPSBOT_DIR}/frosty_node_key" 2>/dev/null || true
 }
 
-# Safely writes/updates a node entry inside /opt/Frosty-vps-bot/nodes_data.json using python3 (Always keeps Node-1)
+# Safely writes/updates a node entry inside /opt/Frosty-vps-bot/nodes_data.json using python3
 _frosty_bot_register_node_json() {
     local node_name="$1"
     local is_local="$2"
@@ -95,7 +94,6 @@ data[name] = {
     "user": "root"
 }
 
-# Ensure Node-1 local host exists if no local node is present
 if not any(v.get("is_local") for v in data.values() if isinstance(v, dict)):
     data["Node-1"] = {
         "name": "Node-1",
@@ -111,7 +109,7 @@ with open(path, "w", encoding="utf-8") as f:
 PYEOF
 }
 
-# Option [2]: Pair an additional remote VPS node directly from the Primary VPS terminal (No Discord needed)
+# Option [2]: Pair an additional remote VPS node directly from the Primary VPS terminal
 add_vps_bot_remote_node() {
     echo ""
     echo -e "${C_CYAN:-}== Pair Remote VPS Node Directly From Terminal (No Discord Needed) ==${C_RESET:-}"
@@ -209,7 +207,7 @@ add_vps_bot_remote_node() {
     pm2_bin="$(_frosty_pm2_bin 2>/dev/null)"
     if [[ -n "$pm2_bin" ]] && "$pm2_bin" describe vps-bot >/dev/null 2>&1; then
         "$pm2_bin" restart vps-bot >/dev/null 2>&1
-        _frosty_ok "VPS Bot restarted — '${remote_name}' is live right now without needing any Discord command!"
+        _frosty_ok "VPS Bot restarted — '${remote_name}' is live right now!"
     fi
     return 0
 }
@@ -221,12 +219,10 @@ prepare_this_server_as_worker_node() {
     echo "    Adds this VPS directly to your Bot's nodes list without needing Discord commands!"
     echo ""
 
-    # 1. Unlock SSH permissions & StrictModes on THIS worker node immediately
     echo "    [1/4] Unlocking OpenSSH & fixing /root/.ssh permissions on THIS server..."
     _frosty_unlock_local_ssh
     _frosty_ok "OpenSSH Root & Pubkey permissions unlocked on this server"
 
-    # 2. Ensure Docker is running on THIS worker node
     echo "    [2/4] Checking Docker..."
     if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
         load_module "docker.sh"
@@ -237,7 +233,6 @@ prepare_this_server_as_worker_node() {
     fi
     _frosty_ok "Docker is installed and running"
 
-    # 3. Ask for Bot Token & auto-detect which Bot this node is being added to
     read -rsp "  Enter your Discord Bot Token (to auto-detect your bot): " worker_bot_token
     echo ""
     worker_bot_token="${worker_bot_token//[[:space:]]/}"
@@ -248,7 +243,6 @@ prepare_this_server_as_worker_node() {
         _frosty_warn "Continuing with direct VPS pairing..."
     fi
 
-    # 4. Ask for Node Name & IP details
     read -rp "  Enter a name for THIS Worker Node [default: Node-2]: " worker_node_name
     worker_node_name="$(echo "${worker_node_name:-Node-2}" | tr -cd 'A-Za-z0-9_-')"
     [[ -z "$worker_node_name" ]] && worker_node_name="Node-2"
@@ -271,7 +265,6 @@ prepare_this_server_as_worker_node() {
         return 1
     fi
 
-    # Try Method A: Instant API Handshake over port 8765 using Bot Token
     if [[ -n "$worker_bot_token" ]]; then
         echo "    Attempting instant token handshake with Primary Bot (${primary_ip}:8765)..."
         local pair_resp fetched_key
@@ -292,7 +285,6 @@ prepare_this_server_as_worker_node() {
         fi
     fi
 
-    # Method B: Guaranteed Direct SSH Handshake to Primary VPS (works even if port 8765 isn't open)
     echo "    Connecting directly to Primary Bot VPS (${primary_ip}) via SSH to register ${worker_node_name}..."
     read -rp "  Enter Primary Bot VPS SSH Port [default: 22]: " primary_port
     primary_port="${primary_port:-22}"
@@ -304,7 +296,6 @@ prepare_this_server_as_worker_node() {
         return 1
     fi
 
-    # 1. Fetch Primary Bot's SSH public key
     local primary_pubkey
     primary_pubkey="$(SSHPASS="$primary_pass" sshpass -e ssh -p "$primary_port" \
         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -324,14 +315,12 @@ prepare_this_server_as_worker_node() {
         return 1
     fi
 
-    # 2. Authorize Primary Bot's SSH key on THIS worker node
     grep -qxF "$primary_pubkey" /root/.ssh/authorized_keys 2>/dev/null || echo "$primary_pubkey" >> /root/.ssh/authorized_keys
     chmod 600 /root/.ssh/authorized_keys
     chown -R root:root /root/.ssh
     _frosty_unlock_local_ssh
     _frosty_ok "Authorized Primary Bot SSH key on ${worker_node_name}"
 
-    # 3. Tell Primary VPS to test the SSH connection, register Node-1 + Node-2 into nodes_data.json, and restart the bot
     if SSHPASS="$primary_pass" sshpass -e ssh -p "$primary_port" \
         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
         -o PubkeyAuthentication=no -o PreferredAuthentications=password,keyboard-interactive \
@@ -527,6 +516,18 @@ install_vps_bot() {
     fi
 
     cd "$FROSTY_VPSBOT_DIR" || return 1
+
+    # Ensure CPU clamping is patched in docker_utils.py even if the GitHub repo had an older version
+    python3 - << 'PYEOF' 2>/dev/null || true
+import re
+p = "/opt/Frosty-vps-bot/docker_utils.py"
+with open(p, "r", encoding="utf-8") as f:
+    c = f.read()
+if "HOST_CPUS" not in c and "--cpus=" in c:
+    c = re.sub(r'--cpus=\{([a-zA-Z0-9_]+)\}', r'--cpus=$(python3 -c "import os; print(min(int({\1}), os.cpu_count() or 1))")', c)
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(c)
+PYEOF
 
     echo "    Setting up Python virtual environment..."
     python3 -m venv venv >/tmp/frosty_vpsbot_venv.log 2>&1
