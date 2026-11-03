@@ -3,6 +3,7 @@ set -uo pipefail
 
 FROSTY_VPSBOT_DIR="/opt/Frosty-vps-bot"
 FROSTY_WEBSSH_PORT="${PAIR_API_PORT:-8765}"
+DEFAULT_WEBSSH_URL="https://freevps.apex1hosting.qzz.io"
 
 vps_bot_installed() {
     [[ -f "${FROSTY_VPSBOT_DIR}/main.py" ]]
@@ -18,6 +19,11 @@ _frosty_safe_apt_install() {
         TMPDIR=/var/cache/apt/tmp DEBIAN_FRONTEND=noninteractive dpkg --configure -a >/dev/null 2>&1 || true
         TMPDIR=/var/cache/apt/tmp DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@"
     fi
+}
+
+# Helper to detect Private/LAN IPv4
+_frosty_get_private_ip() {
+    hostname -I 2>/dev/null | awk '{print $1}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || echo "127.0.0.1"
 }
 
 # Auto-detects ANY Discord Bot's username & ID directly from its Bot Token
@@ -135,7 +141,7 @@ PYEOF
 # Option [2]: Pair an additional remote VPS node directly from the Primary VPS terminal
 add_vps_bot_remote_node() {
     echo ""
-    echo -e "${C_CYAN:-}== Pair Remote VPS Node Directly From Terminal (No Discord Needed) ==${C_RESET:-}"
+    echo -e "${C_CYAN:-}== Pair Remote VPS Node Directly From Terminal (Public or Private IPv4) ==${C_RESET:-}"
 
     if ! vps_bot_installed; then
         _frosty_fail "VPS Bot is not installed on this server yet — run [1] Install Bot first"
@@ -150,14 +156,14 @@ add_vps_bot_remote_node() {
     remote_name="$(echo "${remote_name:-Node-2}" | tr -cd 'A-Za-z0-9_-')"
     [[ -z "$remote_name" ]] && remote_name="Node-2"
 
-    read -rp "  Enter the Remote VPS Public IPv4 (e.g. 116.66.214.191): " remote_ip
+    read -rp "  Enter the Node IPv4 (Private LAN IPv4 or Public IPv4): " remote_ip
     remote_ip="${remote_ip//[[:space:]]/}"
     if [[ -z "$remote_ip" ]]; then
-        _frosty_fail "Remote IP is required"
+        _frosty_fail "Node IPv4 is required"
         return 1
     fi
 
-    read -rp "  Enter the Remote VPS SSH Port [default: 22]: " remote_port
+    read -rp "  Enter the Node SSH Port [default: 22]: " remote_port
     remote_port="${remote_port//[[:space:]]/}"
     remote_port="${remote_port:-22}"
 
@@ -235,10 +241,10 @@ add_vps_bot_remote_node() {
     return 0
 }
 
-# Option [3]: Run on Node-2 / Worker VPS — pairs itself directly into the Primary VPS without touching Discord!
+# Option [3]: Run on Node-2 / Worker VPS — pairs itself directly into the Primary VPS
 prepare_this_server_as_worker_node() {
     echo ""
-    echo -e "${C_CYAN:-}== Setup THIS Server as a Worker Node (Direct VPS-to-VPS Auto-Add) ==${C_RESET:-}"
+    echo -e "${C_CYAN:-}== Setup THIS Server as a Worker Node (Supports Private & Public IPv4) ==${C_RESET:-}"
     echo "    Adds this VPS directly to your Bot's nodes list without needing Discord commands!"
     echo ""
 
@@ -270,17 +276,19 @@ prepare_this_server_as_worker_node() {
     worker_node_name="$(echo "${worker_node_name:-Node-2}" | tr -cd 'A-Za-z0-9_-')"
     [[ -z "$worker_node_name" ]] && worker_node_name="Node-2"
 
-    local my_ip
-    my_ip="${FROSTY_PUBLIC_IP:-$(curl -s -4 --max-time 5 https://api.ipify.org 2>/dev/null || echo '116.66.214.191')}"
-    read -rp "  Confirm THIS Worker VPS Public IPv4 [${my_ip}]: " input_my_ip
-    my_ip="${input_my_ip:-$my_ip}"
+    local priv_ip pub_ip
+    priv_ip="$(_frosty_get_private_ip)"
+    pub_ip="${FROSTY_PUBLIC_IP:-$(curl -s -4 --max-time 4 https://api.ipify.org 2>/dev/null || echo "$priv_ip")}"
+    echo "    Detected Private IPv4: ${priv_ip} | Public IPv4: ${pub_ip}"
+    read -rp "  Enter IPv4 for THIS Worker Node (use Private IP ${priv_ip} if on same LAN/VPC) [${priv_ip}]: " input_my_ip
+    local my_ip="${input_my_ip:-$priv_ip}"
 
     read -rp "  Enter THIS Worker VPS SSH Port [default: 22]: " my_ssh_port
     my_ssh_port="${my_ssh_port:-22}"
 
     echo ""
     echo -e "${C_CYAN:-}== Direct VPS-to-VPS Pairing (No Discord Required) ==${C_RESET:-}"
-    read -rp "  Enter the Primary Bot VPS IP (where Node-1 / the bot is hosted): " primary_ip
+    read -rp "  Enter the Primary Bot VPS IP (Private or Public IPv4 where Node-1 is hosted): " primary_ip
     primary_ip="${primary_ip//[[:space:]]/}"
 
     if [[ -z "$primary_ip" ]]; then
@@ -303,7 +311,6 @@ prepare_this_server_as_worker_node() {
             curl -s -m 8 -X POST "http://${primary_ip}:${FROSTY_WEBSSH_PORT}/pair" \
                 -d "{\"token\":\"${worker_bot_token}\",\"node_name\":\"${worker_node_name}\",\"ip\":\"${my_ip}\",\"ssh_port\":${my_ssh_port},\"step\":\"confirm\"}" >/dev/null 2>&1 || true
             _frosty_ok "SUCCESS! '${worker_node_name}' (${my_ip}:${my_ssh_port}) is now registered on ${DETECTED_BOT_NAME}!"
-            echo -e "  ${C_GREEN:-}No Discord command needed! Node-1 and ${worker_node_name} are both live!${C_RESET:-}"
             return 0
         fi
     fi
@@ -365,8 +372,7 @@ with open(path, 'w') as f: json.dump(data, f, indent=4)
 PYEOF
             pm2 restart vps-bot >/dev/null 2>&1 || /root/.nvm/versions/node/*/bin/pm2 restart vps-bot >/dev/null 2>&1 || true
         " >/dev/null 2>&1; then
-        _frosty_ok "SUCCESS! '${worker_node_name}' (${my_ip}:${my_ssh_port}) and 'Node-1' are now registered on ${DETECTED_BOT_NAME}!"
-        echo -e "  ${C_GREEN:-}All done from the VPS terminal! You do NOT need to run !node-add in Discord.${C_RESET:-}"
+        _frosty_ok "SUCCESS! '${worker_node_name}' (${my_ip}:${my_ssh_port}) is now registered on ${DETECTED_BOT_NAME}!"
     else
         _frosty_fail "Failed to write nodes_data.json on Primary VPS."
         return 1
@@ -378,9 +384,9 @@ manage_vps_bot_nodes_cli() {
     echo -e "${C_CYAN:-}== Registered Bot Nodes ==${C_RESET:-}"
     local nodes_file="${FROSTY_VPSBOT_DIR}/nodes_data.json"
     if [[ ! -f "$nodes_file" ]]; then
-        local local_ip
-        local_ip="${FROSTY_PUBLIC_IP:-$(curl -s -4 --max-time 5 https://api.ipify.org 2>/dev/null || echo '127.0.0.1')}"
-        _frosty_bot_register_node_json "Node-1" "true" "$local_ip" "22"
+        local priv_ip
+        priv_ip="$(_frosty_get_private_ip)"
+        _frosty_bot_register_node_json "Node-1" "true" "$priv_ip" "22"
     fi
 
     python3 - "$nodes_file" << 'PYEOF'
@@ -399,8 +405,9 @@ PYEOF
     echo "  [2] Rename a Node"
     echo "  [3] Remove a Remote Node"
     echo "  [4] Show Bot SSH Public Key"
-    echo "  [5] Back"
-    read -rp "  Choice [1-5]: " nm_choice
+    echo "  [5] Update Cloudflare WebSSH URL"
+    echo "  [6] Back"
+    read -rp "  Choice [1-6]: " nm_choice
 
     case "$nm_choice" in
         1) add_vps_bot_remote_node ;;
@@ -480,13 +487,30 @@ PYEOF
             cat "${FROSTY_VPSBOT_DIR}/frosty_node_key.pub" 2>/dev/null
             echo ""
             ;;
+        5)
+            read -rp "  Enter Cloudflare WebSSH URL [default: ${DEFAULT_WEBSSH_URL}]: " new_webssh_url
+            new_webssh_url="${new_webssh_url:-$DEFAULT_WEBSSH_URL}"
+            new_webssh_url="${new_webssh_url%/}"
+            if [[ -f "${FROSTY_VPSBOT_DIR}/start.sh" ]]; then
+                if grep -q "WEBSSH_BASE_URL=" "${FROSTY_VPSBOT_DIR}/start.sh"; then
+                    sed -i "s|export WEBSSH_BASE_URL=.*|export WEBSSH_BASE_URL=\"${new_webssh_url}\"|" "${FROSTY_VPSBOT_DIR}/start.sh"
+                else
+                    sed -i "/export DISCORD_BOT_TOKEN/a export WEBSSH_BASE_URL=\"${new_webssh_url}\"" "${FROSTY_VPSBOT_DIR}/start.sh"
+                fi
+                load_module "pm2.sh"
+                local pm2_bin
+                pm2_bin="$(_frosty_pm2_bin 2>/dev/null)"
+                [[ -n "$pm2_bin" ]] && "$pm2_bin" restart vps-bot >/dev/null 2>&1
+                _frosty_ok "Updated WebSSH URL to ${new_webssh_url} and restarted bot!"
+            fi
+            ;;
         *) return 0 ;;
     esac
 }
 
 install_vps_bot() {
     echo ""
-    echo -e "${C_CYAN:-}== Installing Multi-Node VPS Discord Bot + WebSSH ==${C_RESET:-}"
+    echo -e "${C_CYAN:-}== Installing Multi-Node VPS Bot (Private IPv4 + Cloudflare WebSSH + SSHX) ==${C_RESET:-}"
 
     echo "    Installing base requirements (safe container mode)..."
     if ! _frosty_safe_apt_install git nano python3 python3-pip python3-venv sshpass openssh-client openssh-server curl ca-certificates >/tmp/frosty_vpsbot_apt.log 2>&1; then
@@ -506,7 +530,6 @@ install_vps_bot() {
         _frosty_ok "Docker already available"
     fi
 
-    # Back up existing JSON data, SSH keys, and webssh.html before re-cloning
     local backup_tmp="/var/cache/apt/tmp/frosty_vpsbot_backup_$$"
     if [[ -d "$FROSTY_VPSBOT_DIR" ]]; then
         _frosty_warn "Existing installation found — backing up data, keys & webssh.html"
@@ -543,18 +566,6 @@ install_vps_bot() {
     _frosty_setup_webssh_assets
     _frosty_ok "WebSSH static assets ready in ${FROSTY_VPSBOT_DIR}/static/"
 
-    # Ensure CPU clamping is patched in docker_utils.py so 1-CPU nodes never fail
-    python3 - << 'PYEOF' 2>/dev/null || true
-import re
-p = "/opt/Frosty-vps-bot/docker_utils.py"
-with open(p, "r", encoding="utf-8") as f:
-    c = f.read()
-if "HOST_CPUS" not in c and "--cpus=" in c:
-    c = re.sub(r'--cpus=\{([a-zA-Z0-9_]+)\}', r'--cpus=$(python3 -c "import os; print(min(int({\1}), os.cpu_count() or 1))")', c)
-    with open(p, "w", encoding="utf-8") as f:
-        f.write(c)
-PYEOF
-
     echo "    Setting up Python virtual environment..."
     python3 -m venv venv >/tmp/frosty_vpsbot_venv.log 2>&1
     if ! ./venv/bin/pip install -U discord.py flask >>/tmp/frosty_vpsbot_venv.log 2>&1; then
@@ -566,7 +577,7 @@ PYEOF
     _frosty_bot_ensure_ssh_key
 
     echo ""
-    echo -e "${C_CYAN:-}== Bot, Multi-Node & WebSSH Configuration ==${C_RESET:-}"
+    echo -e "${C_CYAN:-}== Bot, Private IPv4 & Cloudflare WebSSH Configuration ==${C_RESET:-}"
     read -rp "  Your Discord user ID (MAIN_ADMIN_ID): " admin_id
     admin_id="${admin_id//[[:space:]]/}"
     if [[ -z "$admin_id" || ! "$admin_id" =~ ^[0-9]+$ ]]; then
@@ -590,12 +601,20 @@ PYEOF
     primary_node_name="$(echo "${primary_node_name:-Node-1}" | tr -cd 'A-Za-z0-9_-')"
     [[ -z "$primary_node_name" ]] && primary_node_name="Node-1"
 
-    local local_pub_ip
-    local_pub_ip="${FROSTY_PUBLIC_IP:-$(curl -s -4 --max-time 5 https://api.ipify.org 2>/dev/null || echo '127.0.0.1')}"
-    read -rp "  Confirm THIS Server's Public IPv4 (used for WebSSH links) [${local_pub_ip}]: " input_pub_ip
-    local_pub_ip="${input_pub_ip:-$local_pub_ip}"
+    local detected_priv_ip detected_pub_ip
+    detected_priv_ip="$(_frosty_get_private_ip)"
+    detected_pub_ip="${FROSTY_PUBLIC_IP:-$(curl -s -4 --max-time 4 https://api.ipify.org 2>/dev/null || echo "$detected_priv_ip")}"
 
-    read -rp "  Enter WebSSH & Node Auto-Pair HTTP Port [default: 8765]: " webssh_port
+    echo ""
+    echo "  Detected Private IPv4: ${detected_priv_ip} | Public IPv4: ${detected_pub_ip}"
+    read -rp "  Enter IPv4 for THIS Node (Press Enter for Private IPv4 ${detected_priv_ip}): " input_node_ip
+    local local_node_ip="${input_node_ip:-$detected_priv_ip}"
+
+    read -rp "  Enter Cloudflare / Public WebSSH URL [default: ${DEFAULT_WEBSSH_URL}]: " webssh_url
+    webssh_url="${webssh_url:-$DEFAULT_WEBSSH_URL}"
+    webssh_url="${webssh_url%/}"
+
+    read -rp "  Enter Local WebSSH Listener Port (Cloudflare tunnel target port) [default: 8765]: " webssh_port
     webssh_port="${webssh_port//[[:space:]]/}"
     webssh_port="${webssh_port:-8765}"
     FROSTY_WEBSSH_PORT="$webssh_port"
@@ -603,17 +622,18 @@ PYEOF
     if [[ -f config.py ]]; then
         grep -q "MAIN_ADMIN_ID" config.py && sed -i "s/MAIN_ADMIN_ID[[:space:]]*=.*/MAIN_ADMIN_ID = ${admin_id}/" config.py
         grep -q "LOCAL_NODE_NAME" config.py && sed -i "s/LOCAL_NODE_NAME[[:space:]]*=.*/LOCAL_NODE_NAME = \"${primary_node_name}\"/" config.py
-        grep -q "SERVER_PUBLIC_IP" config.py && sed -i "s/SERVER_PUBLIC_IP[[:space:]]*=.*/SERVER_PUBLIC_IP = \"${local_pub_ip}\"/" config.py
-        grep -q "WEBSSH_PORT" config.py || echo "WEBSSH_PORT = ${webssh_port}" >> config.py
+        grep -q "SERVER_PUBLIC_IP" config.py && sed -i "s/SERVER_PUBLIC_IP[[:space:]]*=.*/SERVER_PUBLIC_IP = \"${local_node_ip}\"/" config.py
     fi
 
-    _frosty_bot_register_node_json "$primary_node_name" "true" "$local_pub_ip" "22"
-    _frosty_ok "Registered Primary Node '${primary_node_name}' (${local_pub_ip}) in nodes_data.json"
+    _frosty_bot_register_node_json "$primary_node_name" "true" "$local_node_ip" "22"
+    _frosty_ok "Registered Primary Node '${primary_node_name}' (Private/Local IP: ${local_node_ip}) in nodes_data.json"
 
     cat > "${FROSTY_VPSBOT_DIR}/start.sh" << STARTEOF
 #!/usr/bin/env bash
 cd "${FROSTY_VPSBOT_DIR}"
 export DISCORD_BOT_TOKEN="${bot_token}"
+export SERVER_PUBLIC_IP="${local_node_ip}"
+export WEBSSH_BASE_URL="${webssh_url}"
 export PAIR_API_PORT="${webssh_port}"
 source venv/bin/activate
 exec python3 main.py
@@ -634,7 +654,7 @@ STARTEOF
     _frosty_ensure_pm2_always
     _frosty_pm2_start "vps-bot" "$FROSTY_VPSBOT_DIR" "bash" "start.sh"
 
-    _frosty_ok "VPS Discord bot + WebSSH (http://${local_pub_ip}:${webssh_port}) is online with '${primary_node_name}'!"
+    _frosty_ok "VPS Bot Live! WebSSH Domain: ${webssh_url} (Local Port: ${webssh_port}) | Command: !create"
     return 0
 }
 
@@ -648,7 +668,7 @@ show_vps_bot_submenu() {
     echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_CYAN:-}[1]${C_RESET:-} ${C_WHITE:-}Install / Reinstall Bot + WebSSH${C_RESET:-}        ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
     echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_GREEN:-}[2]${C_RESET:-} ${C_WHITE:-}Add / Pair Remote VPS Node (Terminal)${C_RESET:-}    ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
     echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_YELLOW:-}[3]${C_RESET:-} ${C_WHITE:-}Setup THIS Server as Worker Node${C_RESET:-}         ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
-    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_ICE:-}[4]${C_RESET:-} ${C_WHITE:-}Manage Nodes (List / Rename / Remove)${C_RESET:-}    ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
+    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_ICE:-}[4]${C_RESET:-} ${C_WHITE:-}Manage Nodes & WebSSH URL${C_RESET:-}                ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
     echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_PURPLE:-}[5]${C_RESET:-} ${C_WHITE:-}Restart Bot${C_RESET:-}                              ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
     echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_ICE:-}[6]${C_RESET:-} ${C_WHITE:-}View Bot Logs${C_RESET:-}                            ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
     echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_BLUE:-}[7]${C_RESET:-} ${C_WHITE:-}Back to Main Menu${C_RESET:-}                        ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
