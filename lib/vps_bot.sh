@@ -2,9 +2,22 @@
 set -uo pipefail
 
 FROSTY_VPSBOT_DIR="/opt/Frosty-vps-bot"
+FROSTY_WEBSSH_PORT="${PAIR_API_PORT:-8765}"
 
 vps_bot_installed() {
     [[ -f "${FROSTY_VPSBOT_DIR}/main.py" ]]
+}
+
+# Safe apt-get wrapper that prevents systemd-tmpfiles from wiping /tmp/apt-dpkg-install-* mid-install
+_frosty_safe_apt_install() {
+    mkdir -p /var/cache/apt/tmp /var/cache/apt/archives/partial
+    TMPDIR=/var/cache/apt/tmp DEBIAN_FRONTEND=noninteractive dpkg --configure -a >/dev/null 2>&1 || true
+    TMPDIR=/var/cache/apt/tmp DEBIAN_FRONTEND=noninteractive apt-get install -f -y --no-install-recommends >/dev/null 2>&1 || true
+    TMPDIR=/var/cache/apt/tmp DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null 2>&1 || true
+    if ! TMPDIR=/var/cache/apt/tmp DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@"; then
+        TMPDIR=/var/cache/apt/tmp DEBIAN_FRONTEND=noninteractive dpkg --configure -a >/dev/null 2>&1 || true
+        TMPDIR=/var/cache/apt/tmp DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@"
+    fi
 }
 
 # Auto-detects ANY Discord Bot's username & ID directly from its Bot Token
@@ -19,8 +32,7 @@ _frosty_detect_bot_from_token() {
 
 # Unlocks OpenSSH on the current machine so "Permission denied" NEVER happens
 _frosty_unlock_local_ssh() {
-    DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null 2>&1
-    DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server sshpass curl python3 >/dev/null 2>&1
+    _frosty_safe_apt_install openssh-server sshpass curl python3 ca-certificates >/dev/null 2>&1 || true
     chown root:root /root 2>/dev/null || true
     chmod 700 /root 2>/dev/null || true
     mkdir -p /run/sshd /root/.ssh
@@ -41,9 +53,11 @@ _frosty_unlock_local_ssh() {
     grep -q "^PubkeyAuthentication yes" /etc/ssh/sshd_config || echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config
     grep -q "^StrictModes no" /etc/ssh/sshd_config || echo "StrictModes no" >> /etc/ssh/sshd_config
 
+    ssh-keygen -A >/dev/null 2>&1 || true
+
     if [[ -d /run/systemd/system ]]; then
-        systemctl enable --now ssh >/dev/null 2>&1 || systemctl enable --now sshd >/dev/null 2>&1
-        systemctl restart ssh >/dev/null 2>&1 || systemctl restart sshd >/dev/null 2>&1
+        systemctl enable --now ssh >/dev/null 2>&1 || systemctl enable --now sshd >/dev/null 2>&1 || true
+        systemctl restart ssh >/dev/null 2>&1 || systemctl restart sshd >/dev/null 2>&1 || true
     else
         pkill -HUP sshd 2>/dev/null || /usr/sbin/sshd 2>/dev/null || true
     fi
@@ -56,6 +70,15 @@ _frosty_bot_ensure_ssh_key() {
         ssh-keygen -t ed25519 -f "${FROSTY_VPSBOT_DIR}/frosty_node_key" -N "" -C "frosty-bot-node" >/dev/null 2>&1
     fi
     chmod 600 "${FROSTY_VPSBOT_DIR}/frosty_node_key" 2>/dev/null || true
+}
+
+# Downloads local xterm.js static files for WebSSH so /static/* works offline/fast
+_frosty_setup_webssh_assets() {
+    mkdir -p "${FROSTY_VPSBOT_DIR}/static"
+    curl -sL --max-time 10 "https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" -o "${FROSTY_VPSBOT_DIR}/static/xterm.min.css" 2>/dev/null || true
+    curl -sL --max-time 10 "https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js" -o "${FROSTY_VPSBOT_DIR}/static/xterm.min.js" 2>/dev/null || true
+    curl -sL --max-time 10 "https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js" -o "${FROSTY_VPSBOT_DIR}/static/xterm-addon-fit.min.js" 2>/dev/null || true
+    curl -sL --max-time 10 "https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js" -o "${FROSTY_VPSBOT_DIR}/static/xterm-addon-web-links.min.js" 2>/dev/null || true
 }
 
 # Safely writes/updates a node entry inside /opt/Frosty-vps-bot/nodes_data.json using python3
@@ -154,8 +177,7 @@ add_vps_bot_remote_node() {
         fi
 
         if ! command -v sshpass >/dev/null 2>&1; then
-            DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null 2>&1
-            DEBIAN_FRONTEND=noninteractive apt-get install -y sshpass >/dev/null 2>&1
+            _frosty_safe_apt_install sshpass >/dev/null 2>&1 || true
         fi
 
         echo "    Connecting to ${remote_name} (${remote_ip}:${remote_port}), unlocking SSH & installing key..."
@@ -175,6 +197,7 @@ add_vps_bot_remote_node() {
                 sed -i 's/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config 2>/dev/null || true
                 sed -i 's/^#*StrictModes.*/StrictModes no/' /etc/ssh/sshd_config 2>/dev/null || true
                 sed -i 's/^#*AuthorizedKeysFile.*/AuthorizedKeysFile .ssh\/authorized_keys/' /etc/ssh/sshd_config 2>/dev/null || true
+                ssh-keygen -A >/dev/null 2>&1 || true
                 systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || service ssh restart 2>/dev/null || pkill -HUP sshd 2>/dev/null || /usr/sbin/sshd 2>/dev/null || true
                 if ! command -v docker >/dev/null 2>&1; then
                     curl -fsSL https://get.docker.com | sh >/dev/null 2>&1
@@ -266,9 +289,9 @@ prepare_this_server_as_worker_node() {
     fi
 
     if [[ -n "$worker_bot_token" ]]; then
-        echo "    Attempting instant token handshake with Primary Bot (${primary_ip}:8765)..."
+        echo "    Attempting instant token handshake with Primary Bot (${primary_ip}:${FROSTY_WEBSSH_PORT})..."
         local pair_resp fetched_key
-        pair_resp="$(curl -s -m 8 -X POST "http://${primary_ip}:8765/pair" \
+        pair_resp="$(curl -s -m 8 -X POST "http://${primary_ip}:${FROSTY_WEBSSH_PORT}/pair" \
             -d "{\"token\":\"${worker_bot_token}\",\"node_name\":\"${worker_node_name}\",\"ip\":\"${my_ip}\",\"ssh_port\":${my_ssh_port},\"step\":\"init\"}" 2>/dev/null || true)"
         fetched_key="$(python3 -c 'import json,sys; d=json.loads(sys.stdin.read() or "{}"); print(d.get("pubkey",""))' <<< "$pair_resp" 2>/dev/null)"
 
@@ -277,7 +300,7 @@ prepare_this_server_as_worker_node() {
             chmod 600 /root/.ssh/authorized_keys
             chown -R root:root /root/.ssh
             _frosty_unlock_local_ssh
-            curl -s -m 8 -X POST "http://${primary_ip}:8765/pair" \
+            curl -s -m 8 -X POST "http://${primary_ip}:${FROSTY_WEBSSH_PORT}/pair" \
                 -d "{\"token\":\"${worker_bot_token}\",\"node_name\":\"${worker_node_name}\",\"ip\":\"${my_ip}\",\"ssh_port\":${my_ssh_port},\"step\":\"confirm\"}" >/dev/null 2>&1 || true
             _frosty_ok "SUCCESS! '${worker_node_name}' (${my_ip}:${my_ssh_port}) is now registered on ${DETECTED_BOT_NAME}!"
             echo -e "  ${C_GREEN:-}No Discord command needed! Node-1 and ${worker_node_name} are both live!${C_RESET:-}"
@@ -463,12 +486,10 @@ PYEOF
 
 install_vps_bot() {
     echo ""
-    echo -e "${C_CYAN:-}== Installing Multi-Node VPS Discord Bot ==${C_RESET:-}"
+    echo -e "${C_CYAN:-}== Installing Multi-Node VPS Discord Bot + WebSSH ==${C_RESET:-}"
 
-    echo "    Installing base requirements..."
-    dpkg --configure -a >/tmp/frosty_vpsbot_dpkg.log 2>&1
-    DEBIAN_FRONTEND=noninteractive apt-get update -y >/tmp/frosty_vpsbot_apt.log 2>&1
-    if ! DEBIAN_FRONTEND=noninteractive apt-get install -y git nano python3 python3-pip python3-venv sshpass openssh-client openssh-server curl >>/tmp/frosty_vpsbot_apt.log 2>&1; then
+    echo "    Installing base requirements (safe container mode)..."
+    if ! _frosty_safe_apt_install git nano python3 python3-pip python3-venv sshpass openssh-client openssh-server curl ca-certificates >/tmp/frosty_vpsbot_apt.log 2>&1; then
         _frosty_fail "Base package install failed — see /tmp/frosty_vpsbot_apt.log"
         return 1
     fi
@@ -485,11 +506,12 @@ install_vps_bot() {
         _frosty_ok "Docker already available"
     fi
 
-    local backup_tmp="/tmp/frosty_vpsbot_backup_$$"
+    # Back up existing JSON data, SSH keys, and webssh.html before re-cloning
+    local backup_tmp="/var/cache/apt/tmp/frosty_vpsbot_backup_$$"
     if [[ -d "$FROSTY_VPSBOT_DIR" ]]; then
-        _frosty_warn "Existing installation found — backing up data & re-cloning fresh"
+        _frosty_warn "Existing installation found — backing up data, keys & webssh.html"
         mkdir -p "$backup_tmp"
-        for data_f in user_data.json vps_data.json admin_data.json invite_data.json nodes_data.json frosty_node_key frosty_node_key.pub; do
+        for data_f in user_data.json vps_data.json admin_data.json invite_data.json nodes_data.json frosty_node_key frosty_node_key.pub webssh.html webssh_server.py; do
             if [[ -f "${FROSTY_VPSBOT_DIR}/${data_f}" ]]; then
                 cp -a "${FROSTY_VPSBOT_DIR}/${data_f}" "${backup_tmp}/" 2>/dev/null
             fi
@@ -512,12 +534,16 @@ install_vps_bot() {
     if [[ -d "$backup_tmp" ]]; then
         cp -a "${backup_tmp}/." "$FROSTY_VPSBOT_DIR/" 2>/dev/null
         rm -rf "$backup_tmp"
-        _frosty_ok "Restored existing VPS database, credits, and paired nodes"
+        _frosty_ok "Restored existing VPS database, credits, paired nodes, and WebSSH files"
     fi
 
     cd "$FROSTY_VPSBOT_DIR" || return 1
 
-    # Ensure CPU clamping is patched in docker_utils.py even if the GitHub repo had an older version
+    echo "    Downloading local xterm.js static assets for WebSSH..."
+    _frosty_setup_webssh_assets
+    _frosty_ok "WebSSH static assets ready in ${FROSTY_VPSBOT_DIR}/static/"
+
+    # Ensure CPU clamping is patched in docker_utils.py so 1-CPU nodes never fail
     python3 - << 'PYEOF' 2>/dev/null || true
 import re
 p = "/opt/Frosty-vps-bot/docker_utils.py"
@@ -531,8 +557,8 @@ PYEOF
 
     echo "    Setting up Python virtual environment..."
     python3 -m venv venv >/tmp/frosty_vpsbot_venv.log 2>&1
-    if ! ./venv/bin/pip install -U discord.py >>/tmp/frosty_vpsbot_venv.log 2>&1; then
-        _frosty_fail "pip install discord.py failed — see /tmp/frosty_vpsbot_venv.log"
+    if ! ./venv/bin/pip install -U discord.py flask >>/tmp/frosty_vpsbot_venv.log 2>&1; then
+        _frosty_fail "pip install failed — see /tmp/frosty_vpsbot_venv.log"
         return 1
     fi
     _frosty_ok "Virtual environment ready"
@@ -540,7 +566,7 @@ PYEOF
     _frosty_bot_ensure_ssh_key
 
     echo ""
-    echo -e "${C_CYAN:-}== Bot & Multi-Node Configuration ==${C_RESET:-}"
+    echo -e "${C_CYAN:-}== Bot, Multi-Node & WebSSH Configuration ==${C_RESET:-}"
     read -rp "  Your Discord user ID (MAIN_ADMIN_ID): " admin_id
     admin_id="${admin_id//[[:space:]]/}"
     if [[ -z "$admin_id" || ! "$admin_id" =~ ^[0-9]+$ ]]; then
@@ -566,11 +592,19 @@ PYEOF
 
     local local_pub_ip
     local_pub_ip="${FROSTY_PUBLIC_IP:-$(curl -s -4 --max-time 5 https://api.ipify.org 2>/dev/null || echo '127.0.0.1')}"
+    read -rp "  Confirm THIS Server's Public IPv4 (used for WebSSH links) [${local_pub_ip}]: " input_pub_ip
+    local_pub_ip="${input_pub_ip:-$local_pub_ip}"
+
+    read -rp "  Enter WebSSH & Node Auto-Pair HTTP Port [default: 8765]: " webssh_port
+    webssh_port="${webssh_port//[[:space:]]/}"
+    webssh_port="${webssh_port:-8765}"
+    FROSTY_WEBSSH_PORT="$webssh_port"
 
     if [[ -f config.py ]]; then
         grep -q "MAIN_ADMIN_ID" config.py && sed -i "s/MAIN_ADMIN_ID[[:space:]]*=.*/MAIN_ADMIN_ID = ${admin_id}/" config.py
         grep -q "LOCAL_NODE_NAME" config.py && sed -i "s/LOCAL_NODE_NAME[[:space:]]*=.*/LOCAL_NODE_NAME = \"${primary_node_name}\"/" config.py
         grep -q "SERVER_PUBLIC_IP" config.py && sed -i "s/SERVER_PUBLIC_IP[[:space:]]*=.*/SERVER_PUBLIC_IP = \"${local_pub_ip}\"/" config.py
+        grep -q "WEBSSH_PORT" config.py || echo "WEBSSH_PORT = ${webssh_port}" >> config.py
     fi
 
     _frosty_bot_register_node_json "$primary_node_name" "true" "$local_pub_ip" "22"
@@ -580,6 +614,7 @@ PYEOF
 #!/usr/bin/env bash
 cd "${FROSTY_VPSBOT_DIR}"
 export DISCORD_BOT_TOKEN="${bot_token}"
+export PAIR_API_PORT="${webssh_port}"
 source venv/bin/activate
 exec python3 main.py
 STARTEOF
@@ -594,12 +629,12 @@ STARTEOF
         read -rp "  Pair another Remote VPS Node? [y/N]: " pair_more
     done
 
-    echo "    Starting the bot under pm2..."
+    echo "    Starting the bot + WebSSH server under pm2..."
     load_module "pm2.sh"
     _frosty_ensure_pm2_always
     _frosty_pm2_start "vps-bot" "$FROSTY_VPSBOT_DIR" "bash" "start.sh"
 
-    _frosty_ok "VPS Discord bot is online with '${primary_node_name}'!"
+    _frosty_ok "VPS Discord bot + WebSSH (http://${local_pub_ip}:${webssh_port}) is online with '${primary_node_name}'!"
     return 0
 }
 
@@ -610,7 +645,7 @@ show_vps_bot_submenu() {
     echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}      ${C_ICE:-}${C_BOLD:-}❄  M U L T I - N O D E   B O T  ❄${C_RESET:-}       ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
     echo -e "${C_FROST:-}${C_BOLD:-}╠══════════════════════════════════════════════╣${C_RESET:-}"
     echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}                                              ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
-    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_CYAN:-}[1]${C_RESET:-} ${C_WHITE:-}Install / Reinstall Bot (Primary Host)${C_RESET:-}   ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
+    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_CYAN:-}[1]${C_RESET:-} ${C_WHITE:-}Install / Reinstall Bot + WebSSH${C_RESET:-}        ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
     echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_GREEN:-}[2]${C_RESET:-} ${C_WHITE:-}Add / Pair Remote VPS Node (Terminal)${C_RESET:-}    ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
     echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_YELLOW:-}[3]${C_RESET:-} ${C_WHITE:-}Setup THIS Server as Worker Node${C_RESET:-}         ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
     echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_ICE:-}[4]${C_RESET:-} ${C_WHITE:-}Manage Nodes (List / Rename / Remove)${C_RESET:-}    ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
