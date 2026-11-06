@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
+# Frosty VPS Bot v4 installer / node manager  (lib/vps_bot.sh)
 set -uo pipefail
 
 FROSTY_VPSBOT_DIR="/opt/Frosty-vps-bot"
+FROSTY_VPSBOT_REPO="https://github.com/Ronak-gaming/Frosty-vps-bot.git"
 FROSTY_WEBSSH_PORT="${PAIR_API_PORT:-8765}"
 
 vps_bot_installed() {
     [[ -f "${FROSTY_VPSBOT_DIR}/main.py" ]]
 }
 
+# ── helpers ──────────────────────────────────────────────────────────────
 _frosty_safe_apt_install() {
     mkdir -p /var/cache/apt/tmp /var/cache/apt/archives/partial
     TMPDIR=/var/cache/apt/tmp DEBIAN_FRONTEND=noninteractive dpkg --configure -a >/dev/null 2>&1 || true
@@ -23,45 +26,40 @@ _frosty_get_private_ip() {
     hostname -I 2>/dev/null | awk '{print $1}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || echo "127.0.0.1"
 }
 
+_frosty_get_public_ip() {
+    curl -s -4 -m 5 https://api.ipify.org 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || true
+}
+
+_frosty_is_private_ip() {
+    [[ "$1" =~ ^(10\.|127\.|192\.168\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.) ]]
+}
+
 _frosty_detect_bot_from_token() {
-    local token="$1"
-    local resp
+    local token="$1" resp
     resp="$(curl -s -m 8 -H "Authorization: Bot ${token}" https://discord.com/api/v10/users/@me 2>/dev/null || true)"
     DETECTED_BOT_ID="$(python3 -c 'import json,sys; d=json.loads(sys.stdin.read() or "{}"); print(d.get("id",""))' <<< "$resp" 2>/dev/null)"
     DETECTED_BOT_NAME="$(python3 -c 'import json,sys; d=json.loads(sys.stdin.read() or "{}"); print(d.get("username",""))' <<< "$resp" 2>/dev/null)"
     [[ -n "$DETECTED_BOT_ID" && -n "$DETECTED_BOT_NAME" ]]
 }
 
-_frosty_unlock_local_ssh() {
-    _frosty_safe_apt_install openssh-server sshpass curl python3 ca-certificates >/dev/null 2>&1 || true
-    chown root:root /root 2>/dev/null || true
-    chmod 700 /root 2>/dev/null || true
-    mkdir -p /run/sshd /root/.ssh
-    chmod 700 /root/.ssh
-    touch /root/.ssh/authorized_keys
-    chmod 600 /root/.ssh/authorized_keys
-    chown -R root:root /root/.ssh 2>/dev/null || true
+# set KEY=VALUE in the bot's .env (value never passes through sed)
+_frosty_env_set() {
+    local key="$1" val="$2" f="${FROSTY_VPSBOT_DIR}/.env" tmp
+    val="${val//$'\n'/}"
+    touch "$f"; chmod 600 "$f"
+    tmp="$(mktemp)"
+    grep -v "^${key}=" "$f" > "$tmp" 2>/dev/null || true
+    printf '%s=%s\n' "$key" "$val" >> "$tmp"
+    cat "$tmp" > "$f"; rm -f "$tmp"
+}
 
-    rm -f /etc/ssh/sshd_config.d/*.conf 2>/dev/null || true
+_frosty_env_get() {
+    grep -m1 "^$1=" "${FROSTY_VPSBOT_DIR}/.env" 2>/dev/null | cut -d= -f2-
+}
 
-    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config 2>/dev/null || true
-    sed -i 's/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config 2>/dev/null || true
-    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config 2>/dev/null || true
-    sed -i 's/^#*StrictModes.*/StrictModes no/' /etc/ssh/sshd_config 2>/dev/null || true
-    sed -i 's/^#*AuthorizedKeysFile.*/AuthorizedKeysFile .ssh\/authorized_keys/' /etc/ssh/sshd_config 2>/dev/null || true
-
-    grep -q "^PermitRootLogin yes" /etc/ssh/sshd_config || echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
-    grep -q "^PubkeyAuthentication yes" /etc/ssh/sshd_config || echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config
-    grep -q "^StrictModes no" /etc/ssh/sshd_config || echo "StrictModes no" >> /etc/ssh/sshd_config
-
-    ssh-keygen -A >/dev/null 2>&1 || true
-
-    if [[ -d /run/systemd/system ]]; then
-        systemctl enable --now ssh >/dev/null 2>&1 || systemctl enable --now sshd >/dev/null 2>&1 || true
-        systemctl restart ssh >/dev/null 2>&1 || systemctl restart sshd >/dev/null 2>&1 || true
-    else
-        pkill -HUP sshd 2>/dev/null || /usr/sbin/sshd 2>/dev/null || true
-    fi
+# run python inside the bot's venv with its data dir
+_frosty_bot_py() {
+    ( cd "$FROSTY_VPSBOT_DIR" && DATA_DIR="$FROSTY_VPSBOT_DIR" "${FROSTY_VPSBOT_DIR}/venv/bin/python" "$@" )
 }
 
 _frosty_bot_ensure_ssh_key() {
@@ -72,159 +70,79 @@ _frosty_bot_ensure_ssh_key() {
     chmod 600 "${FROSTY_VPSBOT_DIR}/frosty_node_key" 2>/dev/null || true
 }
 
-_frosty_bot_register_node_json() {
-    local node_name="$1"
-    local is_local="$2"
-    local node_ip="$3"
-    local ssh_port="${4:-22}"
-    local nodes_file="${FROSTY_VPSBOT_DIR}/nodes_data.json"
-    local vps_file="${FROSTY_VPSBOT_DIR}/vps_data.json"
-
-    python3 - "$nodes_file" "$vps_file" "$node_name" "$is_local" "$node_ip" "$ssh_port" << 'PYEOF'
-import json, os, sys
-
-path, vps_path, name, is_local_str, ip, port_str = sys.argv[1:7]
-is_local = (is_local_str.lower() == "true")
-port = int(port_str) if port_str.isdigit() else 22
-
-data = {}
-if os.path.exists(path):
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        data = {}
-
-old_local_names = []
-if is_local:
-    for k in list(data.keys()):
-        if isinstance(data[k], dict) and data[k].get("is_local"):
-            old_local_names.append(k)
-            del data[k]
-
-data[name] = {
-    "name": name,
-    "is_local": is_local,
-    "ip": ip,
-    "ssh_port": port,
-    "user": "root"
-}
-
-if not any(v.get("is_local") for v in data.values() if isinstance(v, dict)):
-    data["Node-1"] = {
-        "name": "Node-1",
-        "is_local": True,
-        "ip": "127.0.0.1",
-        "ssh_port": 22,
-        "user": "root"
-    }
-
-os.makedirs(os.path.dirname(path), exist_ok=True)
-with open(path, "w", encoding="utf-8") as f:
-    json.dump(data, f, indent=4)
-
-# Automatically migrate existing local VPS containers if the primary node was renamed
-if is_local and os.path.exists(vps_path):
-    try:
-        with open(vps_path, "r", encoding="utf-8") as f:
-            vps_data = json.load(f)
-        changed = False
-        for uid, vlist in vps_data.items():
-            if isinstance(vlist, list):
-                for v in vlist:
-                    if v.get("node") in old_local_names or v.get("node") not in data:
-                        v["node"] = name
-                        changed = True
-        if changed:
-            with open(vps_path, "w", encoding="utf-8") as f:
-                json.dump(vps_data, f, indent=4)
-    except Exception:
-        pass
-PYEOF
-}
-
-add_vps_bot_remote_node() {
-    echo ""
-    echo -e "${C_CYAN:-}== Pair Remote VPS Node Directly From Terminal ==${C_RESET:-}"
-
-    if ! vps_bot_installed; then
-        _frosty_fail "VPS Bot is not installed on this server yet — run [1] Install Bot first"
-        return 1
-    fi
-
-    _frosty_bot_ensure_ssh_key
-    local pubkey
-    pubkey="$(cat "${FROSTY_VPSBOT_DIR}/frosty_node_key.pub" 2>/dev/null)"
-
-    read -rp "  Enter a name for the new Node [default: Node-2]: " remote_name
-    remote_name="$(echo "${remote_name:-Node-2}" | tr -cd 'A-Za-z0-9_-')"
-    [[ -z "$remote_name" ]] && remote_name="Node-2"
-
-    read -rp "  Enter the Node IPv4: " remote_ip
-    remote_ip="${remote_ip//[[:space:]]/}"
-    if [[ -z "$remote_ip" ]]; then
-        _frosty_fail "Node IPv4 is required"
-        return 1
-    fi
-
-    read -rp "  Enter the Node SSH Port [default: 22]: " remote_port
-    remote_port="${remote_port//[[:space:]]/}"
-    remote_port="${remote_port:-22}"
-
-    echo ""
-    echo "  How do you want to pair ${remote_name} (${remote_ip}:${remote_port})?"
-    echo "    [1] Enter Root Password of ${remote_ip} (Auto-unlocks SSH, copies key & registers node)"
-    echo "    [2] I already ran Option [3] on ${remote_ip} (Pair without password)"
-    read -rp "  Choice [1-2, default: 1]: " auth_mode
-    auth_mode="${auth_mode:-1}"
-
-    if [[ "$auth_mode" == "1" ]]; then
-        read -rsp "  Enter Root Password for ${remote_ip}: " remote_pass
-        echo ""
-        if [[ -z "$remote_pass" ]]; then
-            _frosty_fail "Root password cannot be empty"
-            return 1
-        fi
-
-        echo "    Connecting to ${remote_name} (${remote_ip}:${remote_port}), unlocking SSH & installing key..."
-        if ! SSHPASS="$remote_pass" timeout 240 sshpass -e ssh -p "$remote_port" \
-            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -o PubkeyAuthentication=no -o PreferredAuthentications=password,keyboard-interactive \
-            -o LogLevel=ERROR -o ConnectTimeout=15 \
-            "root@${remote_ip}" "
-                chown root:root /root && chmod 700 /root
-                mkdir -p /run/sshd /root/.ssh && chmod 700 /root/.ssh
-                touch /root/.ssh/authorized_keys
-                grep -qxF '${pubkey}' /root/.ssh/authorized_keys 2>/dev/null || echo '${pubkey}' >> /root/.ssh/authorized_keys
-                chmod 600 /root/.ssh/authorized_keys
-                chown -R root:root /root/.ssh
-                rm -f /etc/ssh/sshd_config.d/*.conf 2>/dev/null || true
-                sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config 2>/dev/null || true
-                sed -i 's/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config 2>/dev/null || true
-                sed -i 's/^#*StrictModes.*/StrictModes no/' /etc/ssh/sshd_config 2>/dev/null || true
-                ssh-keygen -A >/dev/null 2>&1 || true
-                systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || service ssh restart 2>/dev/null || pkill -HUP sshd 2>/dev/null || /usr/sbin/sshd 2>/dev/null || true
-            " >/tmp/frosty_node_pair.log 2>&1; then
-            _frosty_fail "Password login to ${remote_ip}:${remote_port} failed."
-            return 1
-        fi
-    fi
-
-    _frosty_bot_register_node_json "$remote_name" "false" "$remote_ip" "$remote_port"
-    _frosty_ok "Node '${remote_name}' (${remote_ip}:${remote_port}) added to nodes_data.json!"
-
+_frosty_bot_restart() {
     load_module "pm2.sh"
     local pm2_bin
     pm2_bin="$(_frosty_pm2_bin 2>/dev/null)"
-    [[ -n "$pm2_bin" ]] && "$pm2_bin" restart vps-bot >/dev/null 2>&1
-    return 0
+    if [[ -n "$pm2_bin" ]]; then
+        "$pm2_bin" restart vps-bot >/dev/null 2>&1 && return 0
+    fi
+    return 1
 }
 
+# ── pair a remote worker (run on the PRIMARY) ────────────────────────────
+add_vps_bot_remote_node() {
+    echo ""
+    echo -e "${C_CYAN:-}== Pair Remote VPS Node From Terminal ==${C_RESET:-}"
+    if ! vps_bot_installed; then
+        _frosty_fail "VPS Bot is not installed on this server yet — run [1] Install first"
+        return 1
+    fi
+    _frosty_bot_ensure_ssh_key
+
+    read -rp "  Name for the new Node [default: Node-2]: " remote_name
+    remote_name="$(echo "${remote_name:-Node-2}" | tr -cd 'A-Za-z0-9_-')"
+    [[ -z "$remote_name" ]] && remote_name="Node-2"
+    read -rp "  Node IPv4 (private or public): " remote_ip
+    remote_ip="${remote_ip//[[:space:]]/}"
+    [[ -z "$remote_ip" ]] && { _frosty_fail "Node IPv4 is required"; return 1; }
+    read -rp "  Node SSH port [default: 22]: " remote_port
+    remote_port="${remote_port//[[:space:]]/}"; remote_port="${remote_port:-22}"
+
+    echo ""
+    echo "  Pairing method for ${remote_name} (${remote_ip}:${remote_port}):"
+    echo "    [1] Root password (installs the bot key via sshpass)"
+    echo "    [2] Key already authorised (I ran option [3] on the worker)"
+    read -rp "  Choice [1-2, default: 1]: " auth_mode
+    auth_mode="${auth_mode:-1}"
+    local remote_pass=""
+    if [[ "${auth_mode}" == "1" ]]; then
+        read -rsp "  Root password of ${remote_ip}: " remote_pass; echo ""
+        [[ -z "$remote_pass" ]] && { _frosty_fail "Password cannot be empty"; return 1; }
+    fi
+
+    echo "    Pairing…"
+    local out
+    out="$(NODE_NAME="$remote_name" NODE_IP="$remote_ip" NODE_PORT="$remote_port" NODE_PASS="$remote_pass" \
+        _frosty_bot_py - << 'PYEOF' 2>&1
+import asyncio, os
+import docker_utils as du, storage
+async def main():
+    ok, res = await du.pair_remote_node(os.environ["NODE_NAME"], os.environ["NODE_IP"], int(os.environ["NODE_PORT"]), os.environ.get("NODE_PASS", ""))
+    if ok:
+        storage.register_node(os.environ["NODE_NAME"], os.environ["NODE_IP"], int(os.environ["NODE_PORT"]))
+        print("OK Docker " + res)
+    else:
+        print("FAIL " + res)
+asyncio.run(main())
+PYEOF
+)"
+    if [[ "$out" == OK* ]]; then
+        _frosty_ok "Node '${remote_name}' (${remote_ip}:${remote_port}) paired — ${out#OK }"
+    else
+        _frosty_fail "Pairing failed: ${out#FAIL }"
+        echo "    Tip: the worker needs Docker + SSH. Run option [3] on it, or add this key to its /root/.ssh/authorized_keys:"
+        cat "${FROSTY_VPSBOT_DIR}/frosty_node_key.pub" 2>/dev/null
+        return 1
+    fi
+    _frosty_bot_restart || true
+}
+
+# ── prepare THIS server as a worker (run on the WORKER) ──────────────────
 prepare_this_server_as_worker_node() {
     echo ""
     echo -e "${C_CYAN:-}== Setup THIS Server as a Worker Node ==${C_RESET:-}"
-    _frosty_unlock_local_ssh
-    _frosty_ok "OpenSSH Root & Pubkey permissions unlocked on this server"
+    _frosty_safe_apt_install openssh-server curl python3 ca-certificates >/dev/null 2>&1 || true
 
     if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
         load_module "docker.sh"
@@ -232,131 +150,98 @@ prepare_this_server_as_worker_node() {
     fi
     _frosty_ok "Docker is installed and running"
 
-    read -rsp "  Enter your Discord Bot Token: " worker_bot_token
-    echo ""
-    worker_bot_token="${worker_bot_token//[[:space:]]/}"
-    if [[ -n "$worker_bot_token" ]] && _frosty_detect_bot_from_token "$worker_bot_token"; then
-        _frosty_ok "Auto-Detected Target Bot: ${DETECTED_BOT_NAME}"
+    read -rp "  Primary bot URL or IP (e.g. 10.0.0.5 or https://term.example.com): " primary
+    primary="${primary//[[:space:]]/}"
+    [[ -z "$primary" ]] && { _frosty_fail "Primary address required"; return 1; }
+    local base
+    if [[ "$primary" =~ ^https?:// ]]; then base="${primary%/}"; else base="http://${primary}:${FROSTY_WEBSSH_PORT}"; fi
+
+    read -rsp "  Pairing secret (shown by /admin webterm in Discord): " pair_secret; echo ""
+    pair_secret="${pair_secret//[[:space:]]/}"
+    [[ -z "$pair_secret" ]] && { _frosty_fail "Pairing secret required"; return 1; }
+
+    read -rp "  Name for THIS worker [default: Node-2]: " wname
+    wname="$(echo "${wname:-Node-2}" | tr -cd 'A-Za-z0-9_-')"; [[ -z "$wname" ]] && wname="Node-2"
+    local priv_ip; priv_ip="$(_frosty_get_private_ip)"
+    read -rp "  IPv4 the PRIMARY should use to reach this worker [${priv_ip}]: " my_ip
+    my_ip="${my_ip:-$priv_ip}"
+    read -rp "  This worker's SSH port [default: 22]: " my_port
+    my_port="${my_port:-22}"
+
+    local body resp key
+    body="$(python3 -c 'import json,sys; print(json.dumps({"token":sys.argv[1],"node_name":sys.argv[2],"ip":sys.argv[3],"ssh_port":int(sys.argv[4]),"step":"init"}))' "$pair_secret" "$wname" "$my_ip" "$my_port")"
+    resp="$(curl -s -m 10 -X POST -H 'Content-Type: application/json' -d "$body" "${base}/pair" 2>/dev/null || true)"
+    key="$(python3 -c 'import json,sys; d=json.loads(sys.stdin.read() or "{}"); print(d.get("pubkey",""))' <<< "$resp" 2>/dev/null)"
+    if [[ -z "$key" ]]; then
+        _frosty_fail "Primary did not answer / wrong secret (${base}/pair). Check the URL, firewall port ${FROSTY_WEBSSH_PORT} and secret."
+        return 1
     fi
 
-    read -rp "  Enter a name for THIS Worker Node [default: Node-2]: " worker_node_name
-    worker_node_name="$(echo "${worker_node_name:-Node-2}" | tr -cd 'A-Za-z0-9_-')"
-    [[ -z "$worker_node_name" ]] && worker_node_name="Node-2"
+    mkdir -p /root/.ssh; chmod 700 /root/.ssh
+    grep -qxF "$key" /root/.ssh/authorized_keys 2>/dev/null || echo "$key" >> /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys
 
-    local priv_ip
-    priv_ip="$(_frosty_get_private_ip)"
-    read -rp "  Enter IPv4 for THIS Worker Node [${priv_ip}]: " input_my_ip
-    local my_ip="${input_my_ip:-$priv_ip}"
-
-    read -rp "  Enter THIS Worker VPS SSH Port [default: 22]: " my_ssh_port
-    my_ssh_port="${my_ssh_port:-22}"
-
-    read -rp "  Enter the Primary Bot VPS IP: " primary_ip
-    primary_ip="${primary_ip//[[:space:]]/}"
-
-    if [[ -n "$worker_bot_token" && -n "$primary_ip" ]]; then
-        local pair_resp fetched_key
-        pair_resp="$(curl -s -m 8 -X POST "http://${primary_ip}:${FROSTY_WEBSSH_PORT}/pair" \
-            -d "{\"token\":\"${worker_bot_token}\",\"node_name\":\"${worker_node_name}\",\"ip\":\"${my_ip}\",\"ssh_port\":${my_ssh_port},\"step\":\"init\"}" 2>/dev/null || true)"
-        fetched_key="$(python3 -c 'import json,sys; d=json.loads(sys.stdin.read() or "{}"); print(d.get("pubkey",""))' <<< "$pair_resp" 2>/dev/null)"
-
-        if [[ -n "$fetched_key" ]]; then
-            grep -qxF "$fetched_key" /root/.ssh/authorized_keys 2>/dev/null || echo "$fetched_key" >> /root/.ssh/authorized_keys
-            chmod 600 /root/.ssh/authorized_keys
-            curl -s -m 8 -X POST "http://${primary_ip}:${FROSTY_WEBSSH_PORT}/pair" \
-                -d "{\"token\":\"${worker_bot_token}\",\"node_name\":\"${worker_node_name}\",\"ip\":\"${my_ip}\",\"ssh_port\":${my_ssh_port},\"step\":\"confirm\"}" >/dev/null 2>&1 || true
-            _frosty_ok "SUCCESS! '${worker_node_name}' (${my_ip}:${my_ssh_port}) is now registered!"
-            return 0
+    # Minimal sshd change: allow root with KEYS only (drop-in, validated; nothing else is touched)
+    if [[ -d /etc/ssh/sshd_config.d || -f /etc/ssh/sshd_config ]]; then
+        mkdir -p /etc/ssh/sshd_config.d
+        printf 'PermitRootLogin prohibit-password\nPubkeyAuthentication yes\n' > /etc/ssh/sshd_config.d/00-frosty-bot.conf
+        if grep -qE '^\s*Include\s+/etc/ssh/sshd_config.d' /etc/ssh/sshd_config 2>/dev/null && /usr/sbin/sshd -t 2>/dev/null; then
+            systemctl reload ssh >/dev/null 2>&1 || systemctl reload sshd >/dev/null 2>&1 || true
+        else
+            rm -f /etc/ssh/sshd_config.d/00-frosty-bot.conf
+            _frosty_warn "sshd has no drop-in support — make sure 'PermitRootLogin prohibit-password' (or yes) is set manually"
         fi
+    fi
+
+    body="$(python3 -c 'import json,sys; print(json.dumps({"token":sys.argv[1],"node_name":sys.argv[2],"ip":sys.argv[3],"ssh_port":int(sys.argv[4]),"step":"confirm"}))' "$pair_secret" "$wname" "$my_ip" "$my_port")"
+    if curl -s -m 10 -X POST -H 'Content-Type: application/json' -d "$body" "${base}/pair" | grep -q '"ok": true'; then
+        _frosty_ok "'${wname}' (${my_ip}:${my_port}) registered on the primary. Verify with /node list in Discord."
+    else
+        _frosty_warn "Key installed, but registration confirm failed — add it from the primary with /node add"
     fi
 }
 
+# ── node management (primary) ────────────────────────────────────────────
 manage_vps_bot_nodes_cli() {
+    if ! vps_bot_installed; then _frosty_fail "Install the bot first"; return 1; fi
     echo ""
     echo -e "${C_CYAN:-}== Registered Bot Nodes ==${C_RESET:-}"
-    local nodes_file="${FROSTY_VPSBOT_DIR}/nodes_data.json"
-    if [[ ! -f "$nodes_file" ]]; then
-        local priv_ip
-        priv_ip="$(_frosty_get_private_ip)"
-        _frosty_bot_register_node_json "Node-1" "true" "$priv_ip" "22"
-    fi
-
-    python3 - "$nodes_file" << 'PYEOF'
-import json, sys
-with open(sys.argv[1], "r", encoding="utf-8") as f:
-    data = json.load(f)
-for i, (name, cfg) in enumerate(data.items(), 1):
-    kind = "Local Primary Host" if cfg.get("is_local") else "Remote Worker Node"
-    print(f"  [{i}] {name:18s} | {kind:20s} | IP: {cfg.get('ip', '?')}:{cfg.get('ssh_port', 22)}")
+    _frosty_bot_py - << 'PYEOF'
+import storage
+for i, (name, c) in enumerate(storage.get_nodes().items(), 1):
+    kind = "Local Primary Host" if c["is_local"] else "Remote Worker Node"
+    print(f"  [{i}] {name:18s} | {kind:20s} | IP: {c['ip']}:{c['ssh_port']}")
 PYEOF
-
     echo ""
     echo "  [1] Add / Pair a New Remote Node"
-    echo "  [2] Rename a Node (e.g. Node-1 -> cuba32)"
+    echo "  [2] Rename a Node"
     echo "  [3] Remove a Remote Node"
-    echo "  [4] Show Bot SSH Public Key"
-    echo "  [5] Back"
-    read -rp "  Choice [1-5]: " nm_choice
-
+    echo "  [4] Change a Node's IP (what users see)"
+    echo "  [5] Show Bot SSH Public Key"
+    echo "  [6] Back"
+    read -rp "  Choice [1-6]: " nm_choice
     case "$nm_choice" in
         1) add_vps_bot_remote_node ;;
         2)
             read -rp "  Current Node name: " old_n
             read -rp "  New Node name: " new_n
             new_n="$(echo "$new_n" | tr -cd 'A-Za-z0-9_-')"
-            if [[ -z "$old_n" || -z "$new_n" ]]; then
-                _frosty_fail "Both old and new names are required"
-                return 1
-            fi
-            python3 - "$nodes_file" "${FROSTY_VPSBOT_DIR}/vps_data.json" "$old_n" "$new_n" << 'PYEOF'
-import json, os, sys
-n_path, v_path, old_n, new_n = sys.argv[1:5]
-with open(n_path, "r", encoding="utf-8") as f:
-    nodes = json.load(f)
-if old_n not in nodes:
-    sys.exit(1)
-cfg = nodes.pop(old_n)
-cfg["name"] = new_n
-nodes[new_n] = cfg
-with open(n_path, "w", encoding="utf-8") as f:
-    json.dump(nodes, f, indent=4)
-if os.path.exists(v_path):
-    with open(v_path, "r", encoding="utf-8") as f:
-        vps = json.load(f)
-    for vl in vps.values():
-        if isinstance(vl, list):
-            for v in vl:
-                if v.get("node") == old_n:
-                    v["node"] = new_n
-    with open(v_path, "w", encoding="utf-8") as f:
-        json.dump(vps, f, indent=4)
-PYEOF
-            if [[ $? -eq 0 ]]; then
-                _frosty_ok "Node '$old_n' renamed to '$new_n'"
-                load_module "pm2.sh"
-                local pm2_bin
-                pm2_bin="$(_frosty_pm2_bin 2>/dev/null)"
-                [[ -n "$pm2_bin" ]] && "$pm2_bin" restart vps-bot >/dev/null 2>&1
-            else
-                _frosty_fail "Node '$old_n' not found"
-            fi
+            [[ -z "$old_n" || -z "$new_n" ]] && { _frosty_fail "Both names required"; return 1; }
+            local r; r="$(_frosty_bot_py -c 'import sys,storage; print(storage.rename_node(sys.argv[1], sys.argv[2]) or "OK")' "$old_n" "$new_n" 2>&1)"
+            [[ "$r" == "OK" ]] && { _frosty_ok "Renamed '$old_n' → '$new_n'"; _frosty_bot_restart; } || _frosty_fail "$r"
             ;;
         3)
             read -rp "  Remote Node name to remove: " del_n
-            python3 - "$nodes_file" "$del_n" << 'PYEOF'
-import json, sys
-n_path, del_n = sys.argv[1:3]
-with open(n_path, "r", encoding="utf-8") as f:
-    nodes = json.load(f)
-if del_n not in nodes or nodes[del_n].get("is_local"):
-    sys.exit(1)
-del nodes[del_n]
-with open(n_path, "w", encoding="utf-8") as f:
-    json.dump(nodes, f, indent=4)
-PYEOF
-            [[ $? -eq 0 ]] && _frosty_ok "Node '$del_n' removed" || _frosty_fail "Cannot remove node"
+            local r; r="$(_frosty_bot_py -c 'import sys,storage; print(storage.remove_node(sys.argv[1]) or "OK")' "$del_n" 2>&1)"
+            [[ "$r" == "OK" ]] && _frosty_ok "Node '$del_n' removed" || _frosty_fail "$r"
             ;;
         4)
+            read -rp "  Node name: " n_name
+            read -rp "  New IP: " n_ip
+            local r; r="$(_frosty_bot_py -c 'import sys,storage; print("OK" if storage.set_node_ip(sys.argv[1], sys.argv[2]) else "Node not found")' "$n_name" "$n_ip" 2>&1)"
+            [[ "$r" == "OK" ]] && _frosty_ok "IP updated" || _frosty_fail "$r"
+            ;;
+        5)
             _frosty_bot_ensure_ssh_key
             cat "${FROSTY_VPSBOT_DIR}/frosty_node_key.pub" 2>/dev/null
             ;;
@@ -364,11 +249,64 @@ PYEOF
     esac
 }
 
+# ── install / update ─────────────────────────────────────────────────────
+_frosty_bot_backup_and_clone() {
+    local backup_tmp="$1"
+    if [[ -d "$FROSTY_VPSBOT_DIR" ]]; then
+        mkdir -p "$backup_tmp"
+        local f
+        for f in .env frosty.db frosty.db-wal frosty.db-shm user_data.json vps_data.json admin_data.json \
+                 invite_data.json nodes_data.json frosty_node_key frosty_node_key.pub known_hosts; do
+            [[ -f "${FROSTY_VPSBOT_DIR}/${f}" ]] && cp -a "${FROSTY_VPSBOT_DIR}/${f}" "${backup_tmp}/" 2>/dev/null
+        done
+        load_module "pm2.sh"
+        local pm2_bin; pm2_bin="$(_frosty_pm2_bin 2>/dev/null)"
+        [[ -n "$pm2_bin" ]] && "$pm2_bin" delete vps-bot >/dev/null 2>&1
+        rm -rf "$FROSTY_VPSBOT_DIR"
+    fi
+    echo "    Cloning Frosty-vps-bot..."
+    if ! timeout 90 git clone --depth 1 "$FROSTY_VPSBOT_REPO" "$FROSTY_VPSBOT_DIR" >/tmp/frosty_vpsbot_clone.log 2>&1; then
+        _frosty_fail "Clone failed — see /tmp/frosty_vpsbot_clone.log"
+        [[ -d "$backup_tmp" ]] && { mkdir -p "$FROSTY_VPSBOT_DIR"; cp -a "${backup_tmp}/." "$FROSTY_VPSBOT_DIR/" 2>/dev/null; }
+        rm -rf "$backup_tmp"
+        return 1
+    fi
+    if [[ -d "$backup_tmp" ]]; then
+        cp -a "${backup_tmp}/." "$FROSTY_VPSBOT_DIR/" 2>/dev/null
+        rm -rf "$backup_tmp"
+        _frosty_ok "Restored existing database, credits, nodes, keys and settings"
+    fi
+    return 0
+}
+
+_frosty_bot_python_deps() {
+    cd "$FROSTY_VPSBOT_DIR" || return 1
+    [[ -d venv ]] || python3 -m venv venv >/tmp/frosty_vpsbot_venv.log 2>&1
+    if ! ./venv/bin/pip install -q -U pip >>/tmp/frosty_vpsbot_venv.log 2>&1 \
+       || ! ./venv/bin/pip install -q -U -r requirements.txt >>/tmp/frosty_vpsbot_venv.log 2>&1; then
+        _frosty_fail "Python dependency install failed — see /tmp/frosty_vpsbot_venv.log"
+        return 1
+    fi
+    _frosty_ok "Python dependencies installed"
+}
+
+_frosty_bot_write_start_and_run() {
+    cat > "${FROSTY_VPSBOT_DIR}/start.sh" << STARTEOF
+#!/usr/bin/env bash
+cd "${FROSTY_VPSBOT_DIR}"
+exec "${FROSTY_VPSBOT_DIR}/venv/bin/python" main.py
+STARTEOF
+    chmod 700 "${FROSTY_VPSBOT_DIR}/start.sh"
+    load_module "pm2.sh"
+    _frosty_ensure_pm2_always
+    _frosty_pm2_start "vps-bot" "$FROSTY_VPSBOT_DIR" "bash" "start.sh"
+}
+
 install_vps_bot() {
     echo ""
-    echo -e "${C_CYAN:-}== Installing Multi-Node VPS Bot (OS Selector + SSHX) ==${C_RESET:-}"
+    echo -e "${C_CYAN:-}== Installing Frosty VPS Bot v4 (slash commands + Web Terminal) ==${C_RESET:-}"
 
-    if ! _frosty_safe_apt_install git nano python3 python3-pip python3-venv sshpass openssh-client openssh-server curl ca-certificates >/tmp/frosty_vpsbot_apt.log 2>&1; then
+    if ! _frosty_safe_apt_install git nano python3 python3-pip python3-venv sshpass openssh-client curl ca-certificates >/tmp/frosty_vpsbot_apt.log 2>&1; then
         _frosty_fail "Base package install failed — see /tmp/frosty_vpsbot_apt.log"
         return 1
     fi
@@ -379,84 +317,106 @@ install_vps_bot() {
         install_docker || true
     fi
 
-    local backup_tmp="/var/cache/apt/tmp/frosty_vpsbot_backup_$$"
-    if [[ -d "$FROSTY_VPSBOT_DIR" ]]; then
-        mkdir -p "$backup_tmp"
-        for data_f in user_data.json vps_data.json admin_data.json invite_data.json nodes_data.json frosty_node_key frosty_node_key.pub; do
-            [[ -f "${FROSTY_VPSBOT_DIR}/${data_f}" ]] && cp -a "${FROSTY_VPSBOT_DIR}/${data_f}" "${backup_tmp}/" 2>/dev/null
-        done
-        load_module "pm2.sh"
-        local pm2_bin
-        pm2_bin="$(_frosty_pm2_bin 2>/dev/null)"
-        [[ -n "$pm2_bin" ]] && "$pm2_bin" delete vps-bot >/dev/null 2>&1
-        rm -rf "$FROSTY_VPSBOT_DIR"
-    fi
-
-    echo "    Cloning Frosty-vps-bot..."
-    if ! timeout 60 git clone https://github.com/Ronak-gaming/Frosty-vps-bot.git "$FROSTY_VPSBOT_DIR" >/tmp/frosty_vpsbot_clone.log 2>&1; then
-        _frosty_fail "Clone failed — see /tmp/frosty_vpsbot_clone.log"
-        rm -rf "$backup_tmp"
-        return 1
-    fi
-
-    if [[ -d "$backup_tmp" ]]; then
-        cp -a "${backup_tmp}/." "$FROSTY_VPSBOT_DIR/" 2>/dev/null
-        rm -rf "$backup_tmp"
-        _frosty_ok "Restored existing VPS database, credits, and paired nodes"
-    fi
-
-    cd "$FROSTY_VPSBOT_DIR" || return 1
-    python3 -m venv venv >/tmp/frosty_vpsbot_venv.log 2>&1
-    ./venv/bin/pip install -U discord.py >>/tmp/frosty_vpsbot_venv.log 2>&1
+    _frosty_bot_backup_and_clone "/var/cache/apt/tmp/frosty_vpsbot_backup_$$" || return 1
+    _frosty_bot_python_deps || return 1
     _frosty_bot_ensure_ssh_key
 
     echo ""
-    read -rp "  Your Discord user ID (MAIN_ADMIN_ID): " admin_id
-    admin_id="${admin_id//[[:space:]]/}"
-    read -rsp "  Bot token: " bot_token
-    echo ""
-    bot_token="${bot_token//[[:space:]]/}"
-
+    local admin_id bot_token cur_admin cur_token
+    cur_admin="$(_frosty_env_get MAIN_ADMIN_ID)"; cur_token="$(_frosty_env_get DISCORD_BOT_TOKEN)"
+    read -rp "  Your Discord user ID (MAIN_ADMIN_ID)${cur_admin:+ [${cur_admin}]}: " admin_id
+    admin_id="${admin_id//[[:space:]]/}"; admin_id="${admin_id:-$cur_admin}"
+    if [[ ! "$admin_id" =~ ^[0-9]{15,22}$ ]]; then
+        _frosty_fail "That doesn't look like a Discord user ID (enable Developer Mode → right-click yourself → Copy User ID)"
+        return 1
+    fi
+    read -rsp "  Bot token${cur_token:+ [Enter = keep existing]}: " bot_token; echo ""
+    bot_token="${bot_token//[[:space:]]/}"; bot_token="${bot_token:-$cur_token}"
+    [[ -z "$bot_token" ]] && { _frosty_fail "Bot token required"; return 1; }
     if _frosty_detect_bot_from_token "$bot_token"; then
         _frosty_ok "Auto-Detected Discord Bot: ${DETECTED_BOT_NAME} (ID: ${DETECTED_BOT_ID})"
+        echo "    Invite link (scopes bot + applications.commands):"
+        echo "    https://discord.com/oauth2/authorize?client_id=${DETECTED_BOT_ID}&scope=bot%20applications.commands&permissions=2147483648"
+    else
+        _frosty_warn "Could not verify the token with Discord (offline or wrong token) — continuing"
     fi
 
-    read -rp "  Enter a name for THIS Primary Node [default: Node-1]: " primary_node_name
-    primary_node_name="$(echo "${primary_node_name:-Node-1}" | tr -cd 'A-Za-z0-9_-')"
+    local cur_name; cur_name="$(_frosty_env_get LOCAL_NODE_NAME)"
+    read -rp "  Name for THIS Primary Node [default: ${cur_name:-Node-1}]: " primary_node_name
+    primary_node_name="$(echo "${primary_node_name:-${cur_name:-Node-1}}" | tr -cd 'A-Za-z0-9_-')"
     [[ -z "$primary_node_name" ]] && primary_node_name="Node-1"
 
-    local priv_ip
-    priv_ip="$(_frosty_get_private_ip)"
-    read -rp "  Enter IPv4 for THIS Node [${priv_ip}]: " input_node_ip
-    local local_node_ip="${input_node_ip:-$priv_ip}"
+    local pub_ip priv_ip default_ip node_ip
+    pub_ip="$(_frosty_get_public_ip)"; priv_ip="$(_frosty_get_private_ip)"
+    default_ip="${pub_ip:-$priv_ip}"
+    read -rp "  IPv4 users should SSH to for THIS node [${default_ip}]: " node_ip
+    node_ip="${node_ip:-$default_ip}"
 
-    if [[ -f config.py ]]; then
-        sed -i "s|^MAIN_ADMIN_ID.*|MAIN_ADMIN_ID = ${admin_id}|" config.py
-        sed -i "s|^LOCAL_NODE_NAME.*|LOCAL_NODE_NAME = \"${primary_node_name}\"|" config.py
-        sed -i "s|^SERVER_PUBLIC_IP.*|SERVER_PUBLIC_IP = \"${local_node_ip}\"|" config.py
+    # Web console URL: private IP / NAT needs a reachable base URL
+    local web_url=""
+    if _frosty_is_private_ip "$node_ip" || [[ -z "$pub_ip" ]]; then
+        echo ""
+        echo -e "  ${C_YELLOW:-}Private/NAT address detected.${C_RESET:-} Web console links will only open from your LAN/VPN."
+        echo "  For access from anywhere, put a Cloudflare Tunnel (service http://localhost:${FROSTY_WEBSSH_PORT}) in front and enter its URL."
+        read -rp "  Public console URL (e.g. https://term.example.com) [Enter = use http://${node_ip}:${FROSTY_WEBSSH_PORT}]: " web_url
+        web_url="${web_url%/}"
     fi
 
-    _frosty_bot_register_node_json "$primary_node_name" "true" "$local_node_ip" "22"
-    _frosty_ok "Registered Primary Node '${primary_node_name}' (${local_node_ip}) in nodes_data.json"
+    _frosty_env_set DISCORD_BOT_TOKEN "$bot_token"
+    _frosty_env_set MAIN_ADMIN_ID "$admin_id"
+    _frosty_env_set LOCAL_NODE_NAME "$primary_node_name"
+    _frosty_env_set SERVER_PUBLIC_IP "$node_ip"
+    _frosty_env_set WEB_PORT "$FROSTY_WEBSSH_PORT"
+    [[ -n "$web_url" ]] && _frosty_env_set WEB_BASE_URL "$web_url"
+    chmod 600 "${FROSTY_VPSBOT_DIR}/.env"
+    _frosty_ok "Settings saved to ${FROSTY_VPSBOT_DIR}/.env"
 
-    cat > "${FROSTY_VPSBOT_DIR}/start.sh" << STARTEOF
-#!/usr/bin/env bash
-cd "${FROSTY_VPSBOT_DIR}"
-export DISCORD_BOT_TOKEN="${bot_token}"
-export MAIN_ADMIN_ID="${admin_id}"
-export LOCAL_NODE_NAME="${primary_node_name}"
-export SERVER_PUBLIC_IP="${local_node_ip}"
-source venv/bin/activate
-exec python3 main.py
-STARTEOF
-    chmod +x "${FROSTY_VPSBOT_DIR}/start.sh"
-    chmod 600 "${FROSTY_VPSBOT_DIR}/start.sh"
+    # (re)name the local node record in the DB so old VPS records follow it
+    _frosty_bot_py - "$primary_node_name" "$node_ip" << 'PYEOF' >/dev/null 2>&1 || true
+import sys, time, storage
+name, ip = sys.argv[1], sys.argv[2]
+c = storage.db()
+loc = [r["name"] for r in c.execute("SELECT name FROM nodes WHERE is_local=1")]
+for old in loc:
+    if old != name:
+        c.execute("UPDATE vps SET node=? WHERE node=?", (name, old))
+        c.execute("DELETE FROM nodes WHERE name=?", (old,))
+c.execute("INSERT OR REPLACE INTO nodes(name,ip,ssh_port,user,is_local,added_at) VALUES(?,?,22,'root',1,?)", (name, ip, time.time()))
+PYEOF
 
-    load_module "pm2.sh"
-    _frosty_ensure_pm2_always
-    _frosty_pm2_start "vps-bot" "$FROSTY_VPSBOT_DIR" "bash" "start.sh"
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+        ufw allow "${FROSTY_WEBSSH_PORT}/tcp" >/dev/null 2>&1 && _frosty_ok "ufw: opened ${FROSTY_WEBSSH_PORT}/tcp (web console + pairing)"
+    fi
 
-    _frosty_ok "VPS Bot is online with node '${primary_node_name}'! Command: !create"
+    _frosty_bot_write_start_and_run
+    sleep 3
+    if curl -fs -m 5 "http://127.0.0.1:${FROSTY_WEBSSH_PORT}/health" >/dev/null 2>&1; then
+        _frosty_ok "Web terminal server is up on port ${FROSTY_WEBSSH_PORT}"
+    else
+        _frosty_warn "Web terminal not answering yet — check logs with option [7]"
+    fi
+    _frosty_ok "VPS Bot is online with node '${primary_node_name}'! Use /help in Discord (slash commands)."
+    echo "    Pairing secret for workers: run /admin webterm in Discord, or option [6] here."
+}
+
+update_vps_bot() {
+    echo ""
+    echo -e "${C_CYAN:-}== Updating VPS Bot (data is kept) ==${C_RESET:-}"
+    vps_bot_installed || { _frosty_fail "Bot not installed"; return 1; }
+    _frosty_bot_backup_and_clone "/var/cache/apt/tmp/frosty_vpsbot_backup_$$" || return 1
+    _frosty_bot_python_deps || return 1
+    _frosty_bot_write_start_and_run
+    _frosty_ok "Bot updated and restarted"
+}
+
+show_vps_bot_pair_secret() {
+    vps_bot_installed || { _frosty_fail "Bot not installed"; return 1; }
+    echo ""
+    echo -e "${C_CYAN:-}== Worker Pairing Info ==${C_RESET:-}"
+    echo "  Pairing URL : http://<this-server-ip>:${FROSTY_WEBSSH_PORT}  (or your WEB_BASE_URL)"
+    echo -n "  Secret      : "
+    _frosty_bot_py -c 'import storage; print(storage.get_pair_secret())' 2>/dev/null
+    echo "  Console URL : $(_frosty_env_get WEB_BASE_URL)"
 }
 
 show_vps_bot_submenu() {
@@ -470,11 +430,13 @@ show_vps_bot_submenu() {
     echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_YELLOW:-}[3]${C_RESET:-} ${C_WHITE:-}Setup THIS Server as Worker Node${C_RESET:-}         ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
     echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_ICE:-}[4]${C_RESET:-} ${C_WHITE:-}Manage / Rename Nodes${C_RESET:-}                    ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
     echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_PURPLE:-}[5]${C_RESET:-} ${C_WHITE:-}Restart Bot${C_RESET:-}                              ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
-    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_ICE:-}[6]${C_RESET:-} ${C_WHITE:-}View Bot Logs${C_RESET:-}                            ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
-    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_BLUE:-}[7]${C_RESET:-} ${C_WHITE:-}Back to Main Menu${C_RESET:-}                        ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
+    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_CYAN:-}[6]${C_RESET:-} ${C_WHITE:-}Show Worker Pairing Secret${C_RESET:-}               ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
+    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_ICE:-}[7]${C_RESET:-} ${C_WHITE:-}View Bot Logs${C_RESET:-}                            ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
+    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_GREEN:-}[8]${C_RESET:-} ${C_WHITE:-}Update Bot (keep data)${C_RESET:-}                  ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
+    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_BLUE:-}[9]${C_RESET:-} ${C_WHITE:-}Back to Main Menu${C_RESET:-}                        ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
     echo -e "${C_FROST:-}${C_BOLD:-}╚══════════════════════════════════════════════╝${C_RESET:-}"
     echo ""
-    read -rp "  ❄ Select an option [1-7]: " bot_choice
+    read -rp "  ❄ Select an option [1-9]: " bot_choice
 
     load_module "pm2.sh"
     local pm2_bin
@@ -484,9 +446,11 @@ show_vps_bot_submenu() {
         2) add_vps_bot_remote_node ;;
         3) prepare_this_server_as_worker_node ;;
         4) manage_vps_bot_nodes_cli ;;
-        5) [[ -n "$pm2_bin" ]] && "$pm2_bin" restart vps-bot && _frosty_ok "Restarted" ;;
-        6) [[ -n "$pm2_bin" ]] && "$pm2_bin" logs vps-bot --lines 30 --nostream ;;
-        7) return 0 ;;
+        5) if [[ -n "$pm2_bin" ]] && "$pm2_bin" restart vps-bot >/dev/null 2>&1; then _frosty_ok "Restarted"; else _frosty_fail "Bot is not running under pm2 — use [1] or [8]"; fi ;;
+        6) show_vps_bot_pair_secret ;;
+        7) [[ -n "$pm2_bin" ]] && "$pm2_bin" logs vps-bot --lines 40 --nostream ;;
+        8) update_vps_bot ;;
+        9) return 0 ;;
     esac
     echo ""
     read -rp "  Press Enter to continue..." _
