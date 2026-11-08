@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Frosty VPS Bot v4 installer / node manager  (lib/vps_bot.sh)
+# Apex Hosting VPS Bot v4 installer / node manager  (lib/vps_bot.sh)
 set -uo pipefail
 
 FROSTY_VPSBOT_DIR="/opt/Frosty-vps-bot"
@@ -250,32 +250,64 @@ PYEOF
 }
 
 # ── install / update ─────────────────────────────────────────────────────
+# Download the bot into a temp dir (git, then git over HTTP/1.1, then a tarball) so a failed
+# download can never destroy an existing install.
+_frosty_bot_fetch_repo() {
+    local dest="$1" log="/tmp/frosty_vpsbot_clone.log"
+    local tar_url="https://codeload.github.com/Ronak-gaming/Frosty-vps-bot/tar.gz/refs/heads/main"
+    : > "$log"
+    export GIT_TERMINAL_PROMPT=0
+    rm -rf "$dest"
+    echo "    Downloading bot (git)…"
+    if timeout 120 git clone --depth 1 "$FROSTY_VPSBOT_REPO" "$dest" >>"$log" 2>&1; then return 0; fi
+    echo "--- retry: git over HTTP/1.1" >> "$log"; rm -rf "$dest"
+    echo "    git failed, retrying over HTTP/1.1…"
+    if timeout 120 git -c http.version=HTTP/1.1 clone --depth 1 "$FROSTY_VPSBOT_REPO" "$dest" >>"$log" 2>&1; then return 0; fi
+    echo "--- retry: tarball" >> "$log"; rm -rf "$dest"; mkdir -p "$dest"
+    echo "    git failed, trying direct download…"
+    if curl -fsSL --retry 3 --connect-timeout 15 -m 180 "$tar_url" 2>>"$log" | tar -xz -C "$dest" --strip-components=1 2>>"$log" \
+       && [[ -f "${dest}/main.py" ]]; then return 0; fi
+    rm -rf "$dest"
+    return 1
+}
+
 _frosty_bot_backup_and_clone() {
-    local backup_tmp="$1"
+    local new_dir="${FROSTY_VPSBOT_DIR}.new"
+
+    if ! _frosty_bot_fetch_repo "$new_dir"; then
+        _frosty_fail "Could not download the bot from ${FROSTY_VPSBOT_REPO}"
+        echo "    Last lines of /tmp/frosty_vpsbot_clone.log:"
+        tail -n 8 /tmp/frosty_vpsbot_clone.log 2>/dev/null | sed 's/^/      /'
+        echo "    Check: internet/DNS to github.com, that the repo is public, and that 'curl -I https://github.com' works here."
+        [[ -d "$FROSTY_VPSBOT_DIR" ]] && echo "    Your existing install was NOT touched."
+        return 1
+    fi
+
+    # The repo must contain the v4 bot, otherwise the old (broken) one would be installed.
+    local need
+    for need in main.py webterm.py storage.py requirements.txt terminal.html static/xterm.js; do
+        if [[ ! -e "${new_dir}/${need}" ]]; then
+            _frosty_fail "The repository does not contain the v4 bot (missing: ${need})."
+            echo "    Upload the contents of Apex-Hosting-vps-bot-v4.zip to ${FROSTY_VPSBOT_REPO} (branch main), then retry."
+            rm -rf "$new_dir"
+            return 1
+        fi
+    done
+
     if [[ -d "$FROSTY_VPSBOT_DIR" ]]; then
-        mkdir -p "$backup_tmp"
         local f
         for f in .env frosty.db frosty.db-wal frosty.db-shm user_data.json vps_data.json admin_data.json \
                  invite_data.json nodes_data.json frosty_node_key frosty_node_key.pub known_hosts; do
-            [[ -f "${FROSTY_VPSBOT_DIR}/${f}" ]] && cp -a "${FROSTY_VPSBOT_DIR}/${f}" "${backup_tmp}/" 2>/dev/null
+            [[ -f "${FROSTY_VPSBOT_DIR}/${f}" ]] && cp -a "${FROSTY_VPSBOT_DIR}/${f}" "${new_dir}/" 2>/dev/null
         done
         load_module "pm2.sh"
         local pm2_bin; pm2_bin="$(_frosty_pm2_bin 2>/dev/null)"
         [[ -n "$pm2_bin" ]] && "$pm2_bin" delete vps-bot >/dev/null 2>&1
-        rm -rf "$FROSTY_VPSBOT_DIR"
+        rm -rf "${FROSTY_VPSBOT_DIR}.bak"
+        mv "$FROSTY_VPSBOT_DIR" "${FROSTY_VPSBOT_DIR}.bak"
+        _frosty_ok "Kept your database, credits, nodes, keys and settings (old copy: ${FROSTY_VPSBOT_DIR}.bak)"
     fi
-    echo "    Cloning Frosty-vps-bot..."
-    if ! timeout 90 git clone --depth 1 "$FROSTY_VPSBOT_REPO" "$FROSTY_VPSBOT_DIR" >/tmp/frosty_vpsbot_clone.log 2>&1; then
-        _frosty_fail "Clone failed — see /tmp/frosty_vpsbot_clone.log"
-        [[ -d "$backup_tmp" ]] && { mkdir -p "$FROSTY_VPSBOT_DIR"; cp -a "${backup_tmp}/." "$FROSTY_VPSBOT_DIR/" 2>/dev/null; }
-        rm -rf "$backup_tmp"
-        return 1
-    fi
-    if [[ -d "$backup_tmp" ]]; then
-        cp -a "${backup_tmp}/." "$FROSTY_VPSBOT_DIR/" 2>/dev/null
-        rm -rf "$backup_tmp"
-        _frosty_ok "Restored existing database, credits, nodes, keys and settings"
-    fi
+    mv "$new_dir" "$FROSTY_VPSBOT_DIR"
     return 0
 }
 
@@ -304,7 +336,7 @@ STARTEOF
 
 install_vps_bot() {
     echo ""
-    echo -e "${C_CYAN:-}== Installing Frosty VPS Bot v4 (slash commands + Web Terminal) ==${C_RESET:-}"
+    echo -e "${C_CYAN:-}== Installing Apex Hosting VPS Bot v4 (slash commands + Web Terminal) ==${C_RESET:-}"
 
     if ! _frosty_safe_apt_install git nano python3 python3-pip python3-venv sshpass openssh-client curl ca-certificates >/tmp/frosty_vpsbot_apt.log 2>&1; then
         _frosty_fail "Base package install failed — see /tmp/frosty_vpsbot_apt.log"
@@ -315,6 +347,11 @@ install_vps_bot() {
     if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
         load_module "docker.sh"
         install_docker || true
+    fi
+    if ! docker info >/dev/null 2>&1; then
+        _frosty_warn "Docker is NOT usable on this server (restricted container / no systemd?)."
+        echo "    The bot will install, but THIS node cannot run VPS containers."
+        echo "    Deploy on a real VPS/VM, or add worker nodes that have working Docker (option [2] / [3])."
     fi
 
     _frosty_bot_backup_and_clone "/var/cache/apt/tmp/frosty_vpsbot_backup_$$" || return 1
@@ -395,7 +432,9 @@ PYEOF
     else
         _frosty_warn "Web terminal not answering yet — check logs with option [7]"
     fi
+    echo "    Console links will use: $(_frosty_bot_py -c 'import config; print(config.web_base_url())' 2>/dev/null)"
     _frosty_ok "VPS Bot is online with node '${primary_node_name}'! Use /help in Discord (slash commands)."
+    echo "    Wrong console link? In Discord run: /admin seturl https://your-tunnel-domain"
     echo "    Pairing secret for workers: run /admin webterm in Discord, or option [6] here."
 }
 
