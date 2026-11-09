@@ -107,17 +107,19 @@ show_panels_menu() {
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}❯ [1]${C_RESET} ${C_WHITE}Petro (Pterodactyl)${C_RESET}                    ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}❯ [2]${C_RESET} ${C_WHITE}JTG Panel${C_RESET}                              ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}❯ [3]${C_RESET} ${C_WHITE}VPS Bot${C_RESET}                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}❯ [4]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                      ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_GREEN}❯ [4]${C_RESET} ${C_WHITE}PufferPanel${C_RESET}                            ${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}❯ [5]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                      ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -erp "  ❄ Select an option [1-4]: " panels_choice
+    read -erp "  ❄ Select an option [1-5]: " panels_choice
 
     case "$panels_choice" in
         1) show_pterodactyl_menu ;;
         2) load_module "jtg_panel.sh"; run_jtg_panel_flow ;;
         3) load_module "vps_bot.sh"; run_vps_bot_flow ;;
-        4) return 0 ;;
+        4) load_module "pufferpanel.sh"; run_pufferpanel_flow ;;
+        5) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 }
