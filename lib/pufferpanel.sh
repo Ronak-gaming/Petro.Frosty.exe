@@ -232,9 +232,9 @@ uninstall_pufferpanel() {
 show_pufferpanel_submenu() {
     clear
     print_banner
-    echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}          ${C_ICE}${C_BOLD}P U F F E R P A N E L${C_RESET}                 ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╔════════════════════════════════════════════════╗${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}$(_frosty_center "${C_ICE}${C_BOLD}P U F F E R P A N E L${C_RESET}" 48)${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╠════════════════════════════════════════════════╣${C_RESET}"
     if pufferpanel_installed; then
         _frosty_menu_row "$C_GREEN" "Status:" "installed"
     else
@@ -249,7 +249,7 @@ show_pufferpanel_submenu() {
     _frosty_menu_row "$C_YELLOW" "[6]" "Update"
     _frosty_menu_row "$C_RED"    "[7]" "Uninstall"
     _frosty_menu_row "$C_BLUE"   "[8]" "Back"
-    echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╚════════════════════════════════════════════════╝${C_RESET}"
     echo ""
     read -rp "  Select an option [1-8]: " puf_choice
 
