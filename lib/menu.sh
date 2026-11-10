@@ -10,35 +10,154 @@ _frosty_reveal() {
     done
 }
 
-show_main_menu() {
-    clear
-    print_banner
-    _frosty_reveal \
-        "${C_ICE}${C_BOLD}╭─❆────────────────────────────────────────────❆─╮${C_RESET}" \
-        "${C_ICE}${C_BOLD}│${C_RESET}                                                    ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}│${C_RESET}      ${C_CYAN}${C_BOLD}❄${C_RESET}  ${C_WHITE}${C_BOLD}F R O S T Y . E X E${C_RESET}  ${C_CYAN}${C_BOLD}❄${C_RESET}       ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}│${C_RESET}   ${C_FROST}› all-in-one game server infrastructure ‹${C_RESET}   ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}│${C_RESET}                                                    ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}├──────────────────────────────────────────────────┤${C_RESET}" \
-        "${C_ICE}${C_BOLD}│${C_RESET}                                                    ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}│${C_RESET}    ${C_CYAN}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}1${C_RESET}  ${C_WHITE}Panels & VPS Bot${C_RESET}                      ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}│${C_RESET}    ${C_PURPLE}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}2${C_RESET}  ${C_WHITE}Toolbox${C_RESET}                               ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}│${C_RESET}    ${C_BLUE}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}3${C_RESET}  ${C_WHITE}VPS Installer${C_RESET}                        ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}│${C_RESET}    ${C_ICE}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}4${C_RESET}  ${C_WHITE}Repair / Start All Services${C_RESET}          ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}│${C_RESET}    ${C_PURPLE}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}5${C_RESET}  ${C_WHITE}Hypervisor${C_RESET}                           ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}│${C_RESET}    ${C_RED}${C_BOLD}❯❯${C_RESET}  ${C_BOLD}6${C_RESET}  ${C_WHITE}Exit${C_RESET}                                  ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}│${C_RESET}                                                    ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}├──────────────────────────────────────────────────┤${C_RESET}" \
-        "${C_ICE}${C_BOLD}│${C_RESET}  ${C_FROST}❆ Created and maintained by Ronak Gaming ❆${C_RESET}     ${C_ICE}${C_BOLD}│${C_RESET}" \
-        "${C_ICE}${C_BOLD}╰─❆────────────────────────────────────────────❆─╯${C_RESET}"
-    echo ""
+# ════════════════════════════════════════════════════════════════════════
+#  FROSTYY INSTALLER — main screen (framed block-letter banner + arrow-key menu)
+# ════════════════════════════════════════════════════════════════════════
+FROSTY_MENU_ITEMS=("Panels & VPS Bot" "Toolbox" "VPS Installer" "Repair / Start All Services" "Hypervisor" "Exit")
+FROSTY_PICK=""
 
-    local frosty_choice=""
-    while [[ -z "$frosty_choice" ]]; do
-        read -erp "  ❄ Select an option [1-6]: " frosty_choice
+FROSTY_BANNER_LINES=(
+    '         \e[38;5;75m███████\e[38;5;31m╗\e[38;5;75m██████\e[38;5;31m╗\e[0m  \e[38;5;75m██████\e[38;5;31m╗\e[0m \e[38;5;75m███████\e[38;5;31m╗\e[38;5;75m████████\e[38;5;31m╗\e[38;5;75m██\e[38;5;31m╗\e[0m   \e[38;5;75m██\e[38;5;31m╗\e[38;5;75m██\e[38;5;31m╗\e[0m   \e[38;5;75m██\e[38;5;31m╗\e[0m         '
+    '         \e[38;5;81m██\e[38;5;31m╔════╝\e[38;5;81m██\e[38;5;31m╔══\e[38;5;81m██\e[38;5;31m╗\e[38;5;81m██\e[38;5;31m╔═══\e[38;5;81m██\e[38;5;31m╗\e[38;5;81m██\e[38;5;31m╔════╝╚══\e[38;5;81m██\e[38;5;31m╔══╝╚\e[38;5;81m██\e[38;5;31m╗\e[0m \e[38;5;81m██\e[38;5;31m╔╝╚\e[38;5;81m██\e[38;5;31m╗\e[0m \e[38;5;81m██\e[38;5;31m╔╝\e[0m         '
+    '  \e[1;38;5;51m❄\e[0m      \e[38;5;45m█████\e[38;5;31m╗\e[0m  \e[38;5;45m██████\e[38;5;31m╔╝\e[38;5;45m██\e[38;5;31m║\e[0m   \e[38;5;45m██\e[38;5;31m║\e[38;5;45m███████\e[38;5;31m╗\e[0m   \e[38;5;45m██\e[38;5;31m║\e[0m    \e[38;5;31m╚\e[38;5;45m████\e[38;5;31m╔╝\e[0m  \e[38;5;31m╚\e[38;5;45m████\e[38;5;31m╔╝\e[0m       \e[1;38;5;51m❄\e[0m  '
+    '         \e[38;5;51m██\e[38;5;31m╔══╝\e[0m  \e[38;5;51m██\e[38;5;31m╔══\e[38;5;51m██\e[38;5;31m╗\e[38;5;51m██\e[38;5;31m║\e[0m   \e[38;5;51m██\e[38;5;31m║╚════\e[38;5;51m██\e[38;5;31m║\e[0m   \e[38;5;51m██\e[38;5;31m║\e[0m     \e[38;5;31m╚\e[38;5;51m██\e[38;5;31m╔╝\e[0m    \e[38;5;31m╚\e[38;5;51m██\e[38;5;31m╔╝\e[0m           '
+    '         \e[38;5;51m██\e[38;5;31m║\e[0m     \e[38;5;51m██\e[38;5;31m║\e[0m  \e[38;5;51m██\e[38;5;31m║╚\e[38;5;51m██████\e[38;5;31m╔╝\e[38;5;51m███████\e[38;5;31m║\e[0m   \e[38;5;51m██\e[38;5;31m║\e[0m      \e[38;5;51m██\e[38;5;31m║\e[0m      \e[38;5;51m██\e[38;5;31m║\e[0m            '
+    '         \e[38;5;31m╚═╝\e[0m     \e[38;5;31m╚═╝\e[0m  \e[38;5;31m╚═╝\e[0m \e[38;5;31m╚═════╝\e[0m \e[38;5;31m╚══════╝\e[0m   \e[38;5;31m╚═╝\e[0m      \e[38;5;31m╚═╝\e[0m      \e[38;5;31m╚═╝\e[0m            '
+    '    \e[38;5;75m██\e[38;5;31m╗\e[38;5;75m███\e[38;5;31m╗\e[0m   \e[38;5;75m██\e[38;5;31m╗\e[38;5;75m███████\e[38;5;31m╗\e[38;5;75m████████\e[38;5;31m╗\e[0m \e[38;5;75m█████\e[38;5;31m╗\e[0m \e[38;5;75m██\e[38;5;31m╗\e[0m     \e[38;5;75m██\e[38;5;31m╗\e[0m     \e[38;5;75m███████\e[38;5;31m╗\e[38;5;75m██████\e[38;5;31m╗\e[0m     '
+    '    \e[38;5;81m██\e[38;5;31m║\e[38;5;81m████\e[38;5;31m╗\e[0m  \e[38;5;81m██\e[38;5;31m║\e[38;5;81m██\e[38;5;31m╔════╝╚══\e[38;5;81m██\e[38;5;31m╔══╝\e[38;5;81m██\e[38;5;31m╔══\e[38;5;81m██\e[38;5;31m╗\e[38;5;81m██\e[38;5;31m║\e[0m     \e[38;5;81m██\e[38;5;31m║\e[0m     \e[38;5;81m██\e[38;5;31m╔════╝\e[38;5;81m██\e[38;5;31m╔══\e[38;5;81m██\e[38;5;31m╗\e[0m    '
+    '    \e[38;5;45m██\e[38;5;31m║\e[38;5;45m██\e[38;5;31m╔\e[38;5;45m██\e[38;5;31m╗\e[0m \e[38;5;45m██\e[38;5;31m║\e[38;5;45m███████\e[38;5;31m╗\e[0m   \e[38;5;45m██\e[38;5;31m║\e[0m   \e[38;5;45m███████\e[38;5;31m║\e[38;5;45m██\e[38;5;31m║\e[0m     \e[38;5;45m██\e[38;5;31m║\e[0m     \e[38;5;45m█████\e[38;5;31m╗\e[0m  \e[38;5;45m██████\e[38;5;31m╔╝\e[0m    '
+    '    \e[38;5;51m██\e[38;5;31m║\e[38;5;51m██\e[38;5;31m║╚\e[38;5;51m██\e[38;5;31m╗\e[38;5;51m██\e[38;5;31m║╚════\e[38;5;51m██\e[38;5;31m║\e[0m   \e[38;5;51m██\e[38;5;31m║\e[0m   \e[38;5;51m██\e[38;5;31m╔══\e[38;5;51m██\e[38;5;31m║\e[38;5;51m██\e[38;5;31m║\e[0m     \e[38;5;51m██\e[38;5;31m║\e[0m     \e[38;5;51m██\e[38;5;31m╔══╝\e[0m  \e[38;5;51m██\e[38;5;31m╔══\e[38;5;51m██\e[38;5;31m╗\e[0m    '
+    '    \e[38;5;51m██\e[38;5;31m║\e[38;5;51m██\e[38;5;31m║\e[0m \e[38;5;31m╚\e[38;5;51m████\e[38;5;31m║\e[38;5;51m███████\e[38;5;31m║\e[0m   \e[38;5;51m██\e[38;5;31m║\e[0m   \e[38;5;51m██\e[38;5;31m║\e[0m  \e[38;5;51m██\e[38;5;31m║\e[38;5;51m███████\e[38;5;31m╗\e[38;5;51m███████\e[38;5;31m╗\e[38;5;51m███████\e[38;5;31m╗\e[38;5;51m██\e[38;5;31m║\e[0m  \e[38;5;51m██\e[38;5;31m║\e[0m    '
+    '    \e[38;5;31m╚═╝╚═╝\e[0m  \e[38;5;31m╚═══╝╚══════╝\e[0m   \e[38;5;31m╚═╝\e[0m   \e[38;5;31m╚═╝\e[0m  \e[38;5;31m╚═╝╚══════╝╚══════╝╚══════╝╚═╝\e[0m  \e[38;5;31m╚═╝\e[0m    '
+)
+
+declare -F _frosty_menu_row >/dev/null 2>&1 || _frosty_menu_row() {
+    local color="$1" label="$2" text="$3" pad
+    pad=$(( 45 - ${#label} - ${#text} )); (( pad < 1 )) && pad=1
+    printf '%b\n' "${C_FROST}${C_BOLD}║${C_RESET}  ${color}${label}${C_RESET} ${C_WHITE}${text}${C_RESET}$(printf '%*s' "$pad" '')${C_FROST}${C_BOLD}║${C_RESET}"
+}
+
+# one menu row inside the inner rounded box (74 visible columns)
+_frosty_main_row() {
+    local i="$1" sel="$2" label="${FROSTY_MENU_ITEMS[$(( $1 - 1 ))]}"
+    local F="${C_CYAN}${C_BOLD}" R="${C_RESET}" content pad
+    pad=$(( 62 - ${#label} )); (( pad < 0 )) && pad=0
+    if [[ "$sel" == "1" ]]; then
+        content="  \e[48;5;17m\e[1;38;5;51m❯❯\e[0m   ${C_CYAN}${C_BOLD}[${i}]${R}  \e[48;5;24m\e[1;38;5;255m${label}$(printf '%*s' "$pad" '')\e[0m"
+    else
+        content="  ${C_BLUE}${C_BOLD}❯❯${R}   ${C_CYAN}${C_BOLD}[${i}]${R}  ${C_WHITE}${label}${R}$(printf '%*s' "$pad" '')"
+    fi
+    printf '%b\n' "${F}┃${R} ${F}│${R}${content}${F}│${R} ${F}┃${R}"
+}
+
+_frosty_main_prompt_line() {   # $1 = typed text
+    local F="${C_CYAN}${C_BOLD}" R="${C_RESET}" typed="${1:-}" pad
+    pad=$(( 78 - 27 - ${#typed} ))
+    printf '\r\033[2K%b' "${F}┃${R} ${C_ICE}${C_BOLD}❄${R} ${C_WHITE}Select an option [1-6]:${R} ${typed}$(printf '%*s' "$pad" '')${F}┃${R}"
+    printf '\r\033[28C'
+}
+
+_frosty_main_draw() {          # $1 = selected row
+    local sel="$1" F="${C_CYAN}${C_BOLD}" R="${C_RESET}" l i
+    printf '%b\n' "${F}┏$(_frosty_rule 78 ━)┓${R}"
+    printf '%b\n' "${F}┃◤$(_frosty_rule 76 ─)◥┃${R}"
+    for l in "${FROSTY_BANNER_LINES[@]}"; do
+        printf '%b\n' "${F}┃${R}${l}${F}┃${R}"
     done
 
-    case "$frosty_choice" in
+    local sub sublen a b
+    sub="${F}»»»${R}  ${F}A L L - I N - O N E   I N S T A L L E R${R}  ${F}«««${R}"
+    sublen="$(_frosty_vlen "$sub")"
+    a=$(( (78 - 4 - sublen) / 2 )); b=$(( 78 - 4 - sublen - a ))
+    printf '%b\n' "${F}┣◀$(_frosty_rule "$a" ━) ${R}${sub}${F} $(_frosty_rule "$b" ━)▶┫${R}"
+    printf '%b\n' "${F}┃${R}$(printf '%*s' 78 '')${F}┃${R}"
+
+    printf '%b\n' "${F}┃${R} ${F}╭$(_frosty_rule 74 ─)╮${R} ${F}┃${R}"
+    for i in 1 2 3 4 5 6; do
+        _frosty_main_row "$i" "$([[ "$i" == "$sel" ]] && echo 1 || echo 0)"
+    done
+    printf '%b\n' "${F}┃${R} ${F}╰$(_frosty_rule 74 ─)╯${R} ${F}┃${R}"
+
+    local foot flen fl fr
+    foot="${C_ICE}${C_BOLD}❄${R} ${C_WHITE}Created and maintained by${R} ${C_CYAN}${C_BOLD}Ronak Gaming${R} ${C_ICE}${C_BOLD}❄${R}"
+    flen="$(_frosty_vlen "$foot")"
+    fl=$(( (78 - 4 - flen) / 2 )); fr=$(( 78 - 4 - flen - fl ))
+    printf '%b\n' "${F}┃${R} ${C_CYAN}$(_frosty_rule "$fl" ─)${R} ${foot} ${C_CYAN}$(_frosty_rule "$fr" ─)${R} ${F}┃${R}"
+
+    _frosty_main_prompt_line ""
+    printf '\n'
+    printf '%b\n' "${F}┃◣$(_frosty_rule 76 ─)◢┃${R}"
+    printf '%b' "${F}┗$(_frosty_rule 78 ━)┛${R}"
+}
+
+_frosty_main_redraw_rows() {   # cursor is on the prompt line
+    local sel="$1" i
+    printf '\033[8A\r'
+    for i in 1 2 3 4 5 6; do
+        _frosty_main_row "$i" "$([[ "$i" == "$sel" ]] && echo 1 || echo 0)"
+    done
+    printf '\033[2B'
+    _frosty_main_prompt_line ""
+}
+
+_frosty_ui_can_full() {
+    [[ -t 0 && -t 1 ]] || return 1
+    local cols lines
+    cols="$(tput cols 2>/dev/null || echo 0)"; lines="$(tput lines 2>/dev/null || echo 0)"
+    [[ "$cols" =~ ^[0-9]+$ && "$lines" =~ ^[0-9]+$ ]] || return 1
+    (( cols >= 80 && lines >= 30 ))
+}
+
+# Full screen: arrow keys / j k move the highlight, Enter selects, 1-6 select directly, q exits.
+_frosty_main_menu_pick() {
+    local sel=1 key rest
+    _frosty_main_draw "$sel"
+    printf '\033[2A'
+    _frosty_main_prompt_line ""
+    while true; do
+        IFS= read -rsn1 key || { FROSTY_PICK=6; break; }
+        case "$key" in
+            $'\x1b')
+                rest=""; IFS= read -rsn2 -t 0.1 rest
+                case "$rest" in
+                    '[A'|'OA') (( sel > 1 )) && sel=$(( sel - 1 )) || sel=6 ;;
+                    '[B'|'OB') (( sel < 6 )) && sel=$(( sel + 1 )) || sel=1 ;;
+                    '[H') sel=1 ;;
+                    '[F') sel=6 ;;
+                esac
+                ;;
+            ''|$'\n'|$'\r') FROSTY_PICK="$sel"; break ;;
+            [1-6]) FROSTY_PICK="$key"; _frosty_main_prompt_line "$key"; break ;;
+            q|Q) FROSTY_PICK=6; break ;;
+            k|K) (( sel > 1 )) && sel=$(( sel - 1 )) || sel=6 ;;
+            j|J) (( sel < 6 )) && sel=$(( sel + 1 )) || sel=1 ;;
+        esac
+        _frosty_main_redraw_rows "$sel"
+    done
+    printf '\033[2B\r\n'
+}
+
+# Narrow terminals / pipes: compact framed list with a typed prompt.
+_frosty_main_menu_compact() {
+    local i colors=("$C_CYAN" "$C_PURPLE" "$C_BLUE" "$C_ICE" "$C_PURPLE" "$C_RED")
+    print_banner
+    echo -e "${C_FROST}${C_BOLD}╔════════════════════════════════════════════════╗${C_RESET}"
+    for i in 1 2 3 4 5 6; do
+        _frosty_menu_row "${colors[$(( i - 1 ))]}" "❯ [${i}]" "${FROSTY_MENU_ITEMS[$(( i - 1 ))]}"
+    done
+    echo -e "${C_FROST}${C_BOLD}╠════════════════════════════════════════════════╣${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}$(_frosty_center "${C_ICE}❄${C_RESET} ${C_WHITE}Created and maintained by${C_RESET} ${C_CYAN}${C_BOLD}Ronak Gaming${C_RESET} ${C_ICE}❄${C_RESET}" 48)${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╚════════════════════════════════════════════════╝${C_RESET}"
+    echo ""
+    local choice=""
+    while [[ -z "$choice" ]]; do
+        read -erp "  ❄ Select an option [1-6]: " choice || { choice=6; break; }
+    done
+    FROSTY_PICK="$choice"
+}
+
+_frosty_main_dispatch() {
+    case "$1" in
         1) show_panels_menu ;;
         2) load_module "toolbox.sh"; show_toolbox_menu ;;
         3) show_vps_type_menu ;;
@@ -47,10 +166,21 @@ show_main_menu() {
         6) echo -e "${C_CYAN}❄ Goodbye.${C_RESET}"; exit 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
+}
 
-    echo ""
-    read -rp "  Press Enter to return to the main menu..." _
-    show_main_menu
+show_main_menu() {
+    while true; do
+        clear
+        FROSTY_PICK=""
+        if _frosty_ui_can_full; then
+            _frosty_main_menu_pick
+        else
+            _frosty_main_menu_compact
+        fi
+        _frosty_main_dispatch "$FROSTY_PICK"
+        echo ""
+        read -rp "  Press Enter to return to the main menu..." _ || exit 0
+    done
 }
 
 show_vps_type_menu() {
