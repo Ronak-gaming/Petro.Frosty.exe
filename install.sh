@@ -49,19 +49,31 @@ load_module() {
     fi
 }
 
-# ---- Banner ----
+# ---- UI helpers ----
+# visible length of a string that may contain colour escapes
+_frosty_vlen() { printf '%b' "$1" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | LC_ALL=C.UTF-8 wc -m | tr -d ' '; }
+# centre text (colour escapes allowed) in a field of $2 visible columns
+_frosty_center() {
+    local t="$1" w="$2" len l r
+    len="$(_frosty_vlen "$t")"; (( len > w )) && len=$w
+    l=$(( (w - len) / 2 )); r=$(( w - len - l ))
+    printf '%*s%b%*s' "$l" '' "$t" "$r" ''
+}
+# horizontal rule: $1 = length, $2 = character
+_frosty_rule() {
+    local n="$1" ch="${2:-─}" s
+    (( n < 0 )) && n=0
+    printf -v s '%*s' "$n" ''
+    printf '%s' "${s// /$ch}"
+}
+
+# ---- Banner (compact; the full block-letter screen lives in lib/menu.sh) ----
 print_banner() {
-    echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}          ${C_ICE}${C_BOLD}❄${C_RESET}  ${C_WHITE}${C_BOLD}F R O S T Y . E X E${C_RESET}  ${C_ICE}${C_BOLD}❄${C_RESET}           ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}          ${C_PURPLE}${C_BOLD}❄  ALL-IN-ONE INSTALLER  ❄${C_RESET}          ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}              ${C_CYAN}❄${C_RESET} ${C_ICE}❄${C_RESET} ${C_BLUE}❄${C_RESET} ${C_PURPLE}❄${C_RESET} ${C_CYAN}❄${C_RESET} ${C_ICE}❄${C_RESET} ${C_BLUE}❄${C_RESET} ${C_PURPLE}❄${C_RESET}              ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}    ${C_CYAN}Created${C_RESET} ${C_WHITE}and${C_RESET} ${C_ICE}maintained${C_RESET} ${C_WHITE}by${C_RESET} ${C_PURPLE}${C_BOLD}Ronak${C_RESET} ${C_BLUE}${C_BOLD}Gaming${C_RESET}   ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
+    local F="${C_CYAN}${C_BOLD}" R="${C_RESET}"
+    echo -e "${F}┏$(_frosty_rule 48 ━)┓${R}"
+    echo -e "${F}┃${R}$(_frosty_center "${C_ICE}${C_BOLD}❄${R}  ${C_WHITE}${C_BOLD}F R O S T Y Y   I N S T A L L E R${R}  ${C_ICE}${C_BOLD}❄${R}" 48)${F}┃${R}"
+    echo -e "${F}┃${R}$(_frosty_center "${C_CYAN}${C_BOLD}»»»${R} ${C_BLUE}${C_BOLD}A L L - I N - O N E${R} ${C_CYAN}${C_BOLD}«««${R}" 48)${F}┃${R}"
+    echo -e "${F}┗$(_frosty_rule 48 ━)┛${R}"
 }
 
 # ---- Simple loading/flicker animation ----
