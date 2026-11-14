@@ -109,11 +109,19 @@ _frosty_ui_can_full() {
 }
 
 # Full screen: arrow keys / j k move the highlight, Enter selects, 1-6 select directly, q exits.
+# Throw away anything typed/buffered before the menu was ready (extra Enter while the installer was
+# downloading, or terminals that send CR+LF) so it can never auto-select an option.
+_frosty_drain_stdin() {
+    local _junk
+    while IFS= read -rsn1 -t 0.2 _junk; do :; done
+}
+
 _frosty_main_menu_pick() {
     local sel=1 key rest
     _frosty_main_draw "$sel"
     printf '\033[2A'
     _frosty_main_prompt_line ""
+    _frosty_drain_stdin
     while true; do
         IFS= read -rsn1 key || { FROSTY_PICK=6; break; }
         case "$key" in
@@ -150,6 +158,7 @@ _frosty_main_menu_compact() {
     echo -e "${C_FROST}${C_BOLD}╚════════════════════════════════════════════════╝${C_RESET}"
     echo ""
     local choice=""
+    [[ -t 0 ]] && _frosty_drain_stdin
     while [[ -z "$choice" ]]; do
         read -erp "  ❄ Select an option [1-6]: " choice || { choice=6; break; }
     done
