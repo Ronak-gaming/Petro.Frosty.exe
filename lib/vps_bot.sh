@@ -35,6 +35,51 @@ _frosty_is_private_ip() {
     [[ "$1" =~ ^(10\.|127\.|192\.168\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.) ]]
 }
 
+declare -F _frosty_menu_row >/dev/null 2>&1 || _frosty_menu_row() {
+    local color="$1" label="$2" text="$3" pad
+    pad=$(( 45 - ${#label} - ${#text} )); (( pad < 1 )) && pad=1
+    printf '%b\n' "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${color}${label}${C_RESET:-} ${C_WHITE:-}${text}${C_RESET:-}$(printf '%*s' "$pad" '')${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
+}
+
+# Explains WHY host:port cannot be reached from this machine. Returns 0 if the TCP connection works.
+_frosty_tcp_check() {
+    local host="$1" port="$2" err rc
+    err="$(timeout 6 bash -c "exec 3<>/dev/tcp/${host}/${port}" 2>&1)"; rc=$?
+    [[ $rc -eq 0 ]] && return 0
+    if [[ $rc -eq 124 ]]; then
+        echo "timed out — a firewall/NAT is dropping packets, or ${host} is a private address on a network this server is not on"
+    elif grep -qi "no route" <<< "$err"; then
+        echo "No route to host — this server has no path to ${host} (different private network, wrong IP, or a firewall REJECT rule)"
+    elif grep -qi "refused" <<< "$err"; then
+        echo "connection refused — ${host} is reachable but nothing listens on port ${port} (wrong port or the service is stopped)"
+    else
+        echo "${err:-connection failed}"
+    fi
+    return 1
+}
+
+_frosty_json_get() {   # $1 = json, $2 = key
+    python3 -c 'import json,sys; d=json.loads(sys.stdin.read() or "{}"); v=d.get(sys.argv[1],""); print("" if v is None else v)' "$2" <<< "$1" 2>/dev/null
+}
+
+# Authorise the bot's key for root on THIS worker (key-only; one validated sshd drop-in, nothing else touched).
+_frosty_worker_allow_bot_key() {
+    local key="$1"
+    mkdir -p /root/.ssh; chmod 700 /root/.ssh
+    grep -qxF "$key" /root/.ssh/authorized_keys 2>/dev/null || echo "$key" >> /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys
+    if [[ -d /etc/ssh/sshd_config.d || -f /etc/ssh/sshd_config ]]; then
+        mkdir -p /etc/ssh/sshd_config.d
+        printf 'PermitRootLogin prohibit-password\nPubkeyAuthentication yes\n' > /etc/ssh/sshd_config.d/00-frosty-bot.conf
+        if grep -qE '^\s*Include\s+/etc/ssh/sshd_config.d' /etc/ssh/sshd_config 2>/dev/null && /usr/sbin/sshd -t 2>/dev/null; then
+            systemctl reload ssh >/dev/null 2>&1 || systemctl reload sshd >/dev/null 2>&1 || true
+        else
+            rm -f /etc/ssh/sshd_config.d/00-frosty-bot.conf
+            _frosty_warn "sshd has no drop-in support — make sure 'PermitRootLogin prohibit-password' (or yes) is set manually"
+        fi
+    fi
+}
+
 _frosty_detect_bot_from_token() {
     local token="$1" resp
     resp="$(curl -s -m 8 -H "Authorization: Bot ${token}" https://discord.com/api/v10/users/@me 2>/dev/null || true)"
@@ -132,7 +177,9 @@ PYEOF
         _frosty_ok "Node '${remote_name}' (${remote_ip}:${remote_port}) paired — ${out#OK }"
     else
         _frosty_fail "Pairing failed: ${out#FAIL }"
-        echo "    Tip: the worker needs Docker + SSH. Run option [3] on it, or add this key to its /root/.ssh/authorized_keys:"
+        echo "    Tip: the worker needs Docker + SSH. Run option [3] on it, or add this key to its /root/.ssh/authorized_keys."
+        echo "    Worker on a private network the bot can't reach? Run option [4] -> NAT worker (reverse tunnel) ON the worker."
+        echo "    Bot SSH key:"
         cat "${FROSTY_VPSBOT_DIR}/frosty_node_key.pub" 2>/dev/null
         return 1
     fi
@@ -178,21 +225,7 @@ prepare_this_server_as_worker_node() {
         return 1
     fi
 
-    mkdir -p /root/.ssh; chmod 700 /root/.ssh
-    grep -qxF "$key" /root/.ssh/authorized_keys 2>/dev/null || echo "$key" >> /root/.ssh/authorized_keys
-    chmod 600 /root/.ssh/authorized_keys
-
-    # Minimal sshd change: allow root with KEYS only (drop-in, validated; nothing else is touched)
-    if [[ -d /etc/ssh/sshd_config.d || -f /etc/ssh/sshd_config ]]; then
-        mkdir -p /etc/ssh/sshd_config.d
-        printf 'PermitRootLogin prohibit-password\nPubkeyAuthentication yes\n' > /etc/ssh/sshd_config.d/00-frosty-bot.conf
-        if grep -qE '^\s*Include\s+/etc/ssh/sshd_config.d' /etc/ssh/sshd_config 2>/dev/null && /usr/sbin/sshd -t 2>/dev/null; then
-            systemctl reload ssh >/dev/null 2>&1 || systemctl reload sshd >/dev/null 2>&1 || true
-        else
-            rm -f /etc/ssh/sshd_config.d/00-frosty-bot.conf
-            _frosty_warn "sshd has no drop-in support — make sure 'PermitRootLogin prohibit-password' (or yes) is set manually"
-        fi
-    fi
+    _frosty_worker_allow_bot_key "$key"
 
     body="$(python3 -c 'import json,sys; print(json.dumps({"token":sys.argv[1],"node_name":sys.argv[2],"ip":sys.argv[3],"ssh_port":int(sys.argv[4]),"step":"confirm"}))' "$pair_secret" "$wname" "$my_ip" "$my_port")"
     if curl -s -m 10 -X POST -H 'Content-Type: application/json' -d "$body" "${base}/pair" | grep -q '"ok": true'; then
@@ -200,6 +233,190 @@ prepare_this_server_as_worker_node() {
     else
         _frosty_warn "Key installed, but registration confirm failed — add it from the primary with /node add"
     fi
+}
+
+# ── PRIVATE / NAT worker: reverse tunnel (this server dials OUT to the primary) ──
+FROSTY_TUNNEL_WRAPPER="${FROSTY_TUNNEL_WRAPPER:-/usr/local/sbin/frosty-tunnel.sh}"
+FROSTY_TUNNEL_KEY="${FROSTY_TUNNEL_KEY:-/root/.ssh/frosty_tunnel_key}"
+
+_frosty_tunnel_install_service() {   # host sshport user tunnelport localssh
+    local host="$1" pport="$2" user="$3" tport="$4" lport="$5" ssh_bin
+    ssh_bin="$(command -v ssh)"
+    cat > "$FROSTY_TUNNEL_WRAPPER" << WRAPEOF
+#!/bin/bash
+exec ${ssh_bin} -N -i ${FROSTY_TUNNEL_KEY} \\
+  -o ExitOnForwardFailure=yes -o ServerAliveInterval=20 -o ServerAliveCountMax=3 \\
+  -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/root/.ssh/frosty_tunnel_known_hosts \\
+  -o IdentitiesOnly=yes -o BatchMode=yes \\
+  -R 127.0.0.1:${tport}:127.0.0.1:${lport} -p ${pport} ${user}@${host}
+WRAPEOF
+    chmod 755 "$FROSTY_TUNNEL_WRAPPER"
+
+    if [[ -d /run/systemd/system ]]; then
+        cat > /etc/systemd/system/frosty-tunnel.service << UNITEOF
+[Unit]
+Description=Frosty reverse SSH tunnel to the primary bot host
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=${FROSTY_TUNNEL_WRAPPER}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNITEOF
+        systemctl daemon-reload >/dev/null 2>&1
+        systemctl enable frosty-tunnel >/dev/null 2>&1
+        systemctl restart frosty-tunnel >/dev/null 2>&1
+    else
+        _frosty_warn "No systemd — keeping the tunnel alive with pm2"
+        load_module "pm2.sh"
+        _frosty_ensure_pm2_always >/dev/null 2>&1
+        _frosty_pm2_start "frosty-tunnel" "/root" "bash" "$FROSTY_TUNNEL_WRAPPER"
+    fi
+}
+
+prepare_this_server_as_tunnel_worker() {
+    echo ""
+    echo -e "${C_CYAN:-}== Setup THIS Server as a PRIVATE / NAT Worker (reverse tunnel) ==${C_RESET:-}"
+    echo "  Use this when the bot host CANNOT reach this server (NAT, different private network, 'No route to host')."
+    echo "  This server dials OUT to the primary, so no inbound route to it is needed."
+    echo "  Needed: the primary's SSH port and bot port (${FROSTY_WEBSSH_PORT}) must be reachable FROM this server."
+    echo ""
+    _frosty_safe_apt_install openssh-server openssh-client curl python3 ca-certificates >/dev/null 2>&1 || true
+
+    if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+        load_module "docker.sh"
+        install_docker || return 1
+    fi
+    _frosty_ok "Docker is installed and running"
+
+    read -rp "  Primary bot URL or IP (reachable from THIS server): " primary
+    primary="${primary//[[:space:]]/}"
+    [[ -z "$primary" ]] && { _frosty_fail "Primary address required"; return 1; }
+    local base host
+    if [[ "$primary" =~ ^https?:// ]]; then base="${primary%/}"; else base="http://${primary}:${FROSTY_WEBSSH_PORT}"; fi
+    host="${primary#*://}"; host="${host%%/*}"; host="${host%%:*}"
+
+    local ssh_host ssh_port
+    read -rp "  Primary SSH host [${host}]: " ssh_host; ssh_host="${ssh_host:-$host}"
+    read -rp "  Primary SSH port [22]: " ssh_port; ssh_port="${ssh_port:-22}"
+    local why
+    if ! why="$(_frosty_tcp_check "$ssh_host" "$ssh_port")"; then
+        _frosty_fail "Cannot reach the primary's SSH at ${ssh_host}:${ssh_port}: ${why}"
+        echo "    The tunnel needs THIS server to reach the primary. If neither side can reach the other, use [2] Tailscale first."
+        return 1
+    fi
+    _frosty_ok "Primary SSH ${ssh_host}:${ssh_port} is reachable"
+
+    read -rsp "  Pairing secret (shown by /admin webterm in Discord): " pair_secret; echo ""
+    pair_secret="${pair_secret//[[:space:]]/}"
+    [[ -z "$pair_secret" ]] && { _frosty_fail "Pairing secret required"; return 1; }
+    local wname lport
+    read -rp "  Name for THIS worker [default: Node-2]: " wname
+    wname="$(echo "${wname:-Node-2}" | tr -cd 'A-Za-z0-9_-')"; [[ -z "$wname" ]] && wname="Node-2"
+    read -rp "  THIS server's own SSH port [22]: " lport; lport="${lport:-22}"
+
+    mkdir -p /root/.ssh; chmod 700 /root/.ssh
+    [[ -f "$FROSTY_TUNNEL_KEY" ]] || ssh-keygen -q -t ed25519 -N "" -C "frosty-tunnel-${wname}" -f "$FROSTY_TUNNEL_KEY"
+    local tpub body resp
+    tpub="$(cat "${FROSTY_TUNNEL_KEY}.pub")"
+    body="$(python3 -c 'import json,sys; print(json.dumps({"token":sys.argv[1],"node_name":sys.argv[2],"tunnel_pubkey":sys.argv[3],"step":"tunnel_init"}))' "$pair_secret" "$wname" "$tpub")"
+    resp="$(curl -s -m 15 -X POST -H 'Content-Type: application/json' -d "$body" "${base}/pair" 2>/dev/null || true)"
+    if [[ "$(_frosty_json_get "$resp" ok)" != "True" ]]; then
+        _frosty_fail "Primary refused / did not answer (${base}/pair): $(_frosty_json_get "$resp" error)"
+        echo "    Check the URL, firewall port ${FROSTY_WEBSSH_PORT} and the pairing secret."
+        return 1
+    fi
+    local botkey tport tuser
+    botkey="$(_frosty_json_get "$resp" pubkey)"; tport="$(_frosty_json_get "$resp" tunnel_port)"; tuser="$(_frosty_json_get "$resp" tunnel_user)"
+    [[ -z "$botkey" || -z "$tport" || -z "$tuser" ]] && { _frosty_fail "Unexpected answer from the primary: ${resp:0:200}"; return 1; }
+    _frosty_ok "Primary assigned tunnel port ${tport} (account: ${tuser})"
+
+    _frosty_worker_allow_bot_key "$botkey"
+    _frosty_tunnel_install_service "$ssh_host" "$ssh_port" "$tuser" "$tport" "$lport"
+
+    echo "    Waiting for the tunnel to come up..."
+    local i cbody cresp
+    cbody="$(python3 -c 'import json,sys; print(json.dumps({"token":sys.argv[1],"node_name":sys.argv[2],"step":"tunnel_confirm"}))' "$pair_secret" "$wname")"
+    for i in 1 2 3 4 5 6 7 8; do
+        sleep 3
+        cresp="$(curl -s -m 40 -X POST -H 'Content-Type: application/json' -d "$cbody" "${base}/pair" 2>/dev/null || true)"
+        if [[ "$(_frosty_json_get "$cresp" ok)" == "True" ]]; then
+            _frosty_ok "'${wname}' is connected through the reverse tunnel (Docker $(_frosty_json_get "$cresp" detail)). Check /node list in Discord."
+            echo "    Service: $([[ -d /run/systemd/system ]] && echo 'systemctl status frosty-tunnel' || echo 'pm2 logs frosty-tunnel')"
+            return 0
+        fi
+    done
+    _frosty_fail "Tunnel did not come up: $(_frosty_json_get "$cresp" detail)"
+    echo "    Debug: $([[ -d /run/systemd/system ]] && echo 'journalctl -u frosty-tunnel -n 30' || echo 'pm2 logs frosty-tunnel')"
+    echo "    Common causes: primary sshd has AllowTcpForwarding no, or AllowUsers excludes the tunnel account."
+    return 1
+}
+
+install_tailscale_helper() {
+    echo ""
+    echo -e "${C_CYAN:-}== Private network with Tailscale ==${C_RESET:-}"
+    echo "  Run this on BOTH the bot host and each worker. They get 100.x addresses that can reach each other"
+    echo "  from anywhere; then pair the worker with option [2] using its 100.x address."
+    if ! command -v tailscale >/dev/null 2>&1; then
+        if ! curl -fsSL --retry 2 -m 60 https://tailscale.com/install.sh -o /tmp/frosty_tailscale_install.sh; then
+            _frosty_fail "Could not download the Tailscale installer"; return 1
+        fi
+        sh /tmp/frosty_tailscale_install.sh >/tmp/frosty_tailscale_install.log 2>&1 || { _frosty_fail "Tailscale install failed — see /tmp/frosty_tailscale_install.log"; return 1; }
+    fi
+    _frosty_ok "Tailscale installed"
+    if [[ ! -d /run/systemd/system ]]; then
+        _frosty_warn "No systemd here: Tailscale needs systemd + /dev/net/tun. Use the reverse-tunnel option instead."
+        return 1
+    fi
+    systemctl enable --now tailscaled >/dev/null 2>&1
+    echo "  Log in (open the link it prints):"
+    tailscale up
+    local tip; tip="$(tailscale ip -4 2>/dev/null | head -1)"
+    [[ -n "$tip" ]] && _frosty_ok "This server's Tailscale IP: ${tip}  (use it as the node IP; SSH stays hidden from users automatically)"
+}
+
+test_node_connectivity() {
+    echo ""
+    echo -e "${C_CYAN:-}== Test connectivity from THIS server ==${C_RESET:-}"
+    local h p why
+    read -rp "  Host / IP: " h
+    read -rp "  Port [22]: " p; p="${p:-22}"
+    [[ -z "$h" ]] && { _frosty_fail "Host required"; return 1; }
+    if why="$(_frosty_tcp_check "$h" "$p")"; then
+        _frosty_ok "${h}:${p} is reachable from this server"
+    else
+        _frosty_fail "${h}:${p} — ${why}"
+        echo "    Fix: same network/VPN (Tailscale, option [2] here) or the reverse-tunnel worker setup (option [1] here)."
+    fi
+}
+
+show_vps_bot_private_menu() {
+    clear
+    print_banner
+    echo -e "${C_FROST:-}${C_BOLD:-}╔════════════════════════════════════════════════╗${C_RESET:-}"
+    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}$(_frosty_center "${C_ICE:-}${C_BOLD:-}P R I V A T E  /  N A T  N E T W O R K${C_RESET:-}" 48)${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
+    echo -e "${C_FROST:-}${C_BOLD:-}╠════════════════════════════════════════════════╣${C_RESET:-}"
+    _frosty_menu_row "${C_CYAN:-}"   "[1]" "NAT worker (reverse tunnel)"
+    _frosty_menu_row "${C_GREEN:-}"  "[2]" "Install Tailscale (private network)"
+    _frosty_menu_row "${C_YELLOW:-}" "[3]" "Test connectivity to host:port"
+    _frosty_menu_row "${C_BLUE:-}"   "[4]" "Back"
+    echo -e "${C_FROST:-}${C_BOLD:-}╚════════════════════════════════════════════════╝${C_RESET:-}"
+    echo ""
+    read -rp "  Select an option [1-4]: " pn_choice
+    case "$pn_choice" in
+        1) prepare_this_server_as_tunnel_worker ;;
+        2) install_tailscale_helper ;;
+        3) test_node_connectivity ;;
+        4) return 0 ;;
+        *) echo -e "${C_RED:-}Invalid option.${C_RESET:-}"; sleep 1 ;;
+    esac
+    echo ""
+    read -rp "  Press Enter to continue..." _
+    show_vps_bot_private_menu
 }
 
 # ── node management (primary) ────────────────────────────────────────────
@@ -339,7 +556,7 @@ install_vps_bot() {
     echo ""
     echo -e "${C_CYAN:-}== Installing Apex Hosting VPS Bot v4 (slash commands + Web Terminal) ==${C_RESET:-}"
 
-    if ! _frosty_safe_apt_install git nano python3 python3-pip python3-venv sshpass openssh-client curl ca-certificates >/tmp/frosty_vpsbot_apt.log 2>&1; then
+    if ! _frosty_safe_apt_install git nano python3 python3-pip python3-venv sshpass openssh-client openssh-server curl ca-certificates >/tmp/frosty_vpsbot_apt.log 2>&1; then
         _frosty_fail "Base package install failed — see /tmp/frosty_vpsbot_apt.log"
         return 1
     fi
@@ -438,13 +655,13 @@ PYEOF
     if curl -fs -m 5 "http://127.0.0.1:${FROSTY_WEBSSH_PORT}/health" >/dev/null 2>&1; then
         _frosty_ok "Web terminal server is up on port ${FROSTY_WEBSSH_PORT}"
     else
-        _frosty_warn "Web terminal not answering yet — check logs with option [7]"
+        _frosty_warn "Web terminal not answering yet — check logs with option [8]"
     fi
     echo "    Console links will use: $(_frosty_bot_py -c 'import config; print(config.web_base_url())' 2>/dev/null)"
     echo "    SSH display for node IP ${node_ip}: $(_frosty_bot_py -c 'import config,sys; print("shown" if config.ssh_exposed(sys.argv[1]) else "hidden (private IP -> Web Console / SSHX only)")' "$node_ip" 2>/dev/null)"
     _frosty_ok "VPS Bot is online with node '${primary_node_name}'! Use /help in Discord (slash commands)."
     echo "    Wrong console link? In Discord run: /admin seturl https://your-tunnel-domain"
-    echo "    Pairing secret for workers: run /admin webterm in Discord, or option [6] here."
+    echo "    Pairing secret for workers: run /admin webterm in Discord, or option [7] here."
 }
 
 update_vps_bot() {
@@ -470,21 +687,22 @@ show_vps_bot_pair_secret() {
 show_vps_bot_submenu() {
     clear
     print_banner
-    echo -e "${C_FROST:-}${C_BOLD:-}╔══════════════════════════════════════════════╗${C_RESET:-}"
-    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}      ${C_ICE:-}${C_BOLD:-}❄  M U L T I - N O D E   B O T  ❄${C_RESET:-}       ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
-    echo -e "${C_FROST:-}${C_BOLD:-}╠══════════════════════════════════════════════╣${C_RESET:-}"
-    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_CYAN:-}[1]${C_RESET:-} ${C_WHITE:-}Install / Reinstall Bot${C_RESET:-}                 ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
-    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_GREEN:-}[2]${C_RESET:-} ${C_WHITE:-}Add / Pair Remote VPS Node (Terminal)${C_RESET:-}    ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
-    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_YELLOW:-}[3]${C_RESET:-} ${C_WHITE:-}Setup THIS Server as Worker Node${C_RESET:-}         ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
-    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_ICE:-}[4]${C_RESET:-} ${C_WHITE:-}Manage / Rename Nodes${C_RESET:-}                    ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
-    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_PURPLE:-}[5]${C_RESET:-} ${C_WHITE:-}Restart Bot${C_RESET:-}                              ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
-    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_CYAN:-}[6]${C_RESET:-} ${C_WHITE:-}Show Worker Pairing Secret${C_RESET:-}               ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
-    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_ICE:-}[7]${C_RESET:-} ${C_WHITE:-}View Bot Logs${C_RESET:-}                            ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
-    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_GREEN:-}[8]${C_RESET:-} ${C_WHITE:-}Update Bot (keep data)${C_RESET:-}                  ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
-    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}  ${C_BLUE:-}[9]${C_RESET:-} ${C_WHITE:-}Back to Main Menu${C_RESET:-}                        ${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
-    echo -e "${C_FROST:-}${C_BOLD:-}╚══════════════════════════════════════════════╝${C_RESET:-}"
+    echo -e "${C_FROST:-}${C_BOLD:-}╔════════════════════════════════════════════════╗${C_RESET:-}"
+    echo -e "${C_FROST:-}${C_BOLD:-}║${C_RESET:-}$(_frosty_center "${C_ICE:-}${C_BOLD:-}❄  M U L T I - N O D E   B O T  ❄${C_RESET:-}" 48)${C_FROST:-}${C_BOLD:-}║${C_RESET:-}"
+    echo -e "${C_FROST:-}${C_BOLD:-}╠════════════════════════════════════════════════╣${C_RESET:-}"
+    _frosty_menu_row "${C_CYAN:-}"   "[1]" "Install / Reinstall Bot"
+    _frosty_menu_row "${C_GREEN:-}"  "[2]" "Add / Pair Remote VPS Node (Terminal)"
+    _frosty_menu_row "${C_YELLOW:-}" "[3]" "Setup THIS Server as Worker Node"
+    _frosty_menu_row "${C_PURPLE:-}" "[4]" "Private / NAT Network Tools >"
+    _frosty_menu_row "${C_ICE:-}"    "[5]" "Manage / Rename Nodes"
+    _frosty_menu_row "${C_PURPLE:-}" "[6]" "Restart Bot"
+    _frosty_menu_row "${C_CYAN:-}"   "[7]" "Show Worker Pairing Secret"
+    _frosty_menu_row "${C_ICE:-}"    "[8]" "View Bot Logs"
+    _frosty_menu_row "${C_GREEN:-}"  "[9]" "Update Bot (keep data)"
+    _frosty_menu_row "${C_BLUE:-}"   "[0]" "Back to Main Menu"
+    echo -e "${C_FROST:-}${C_BOLD:-}╚════════════════════════════════════════════════╝${C_RESET:-}"
     echo ""
-    read -rp "  ❄ Select an option [1-9]: " bot_choice
+    read -rp "  ❄ Select an option [0-9]: " bot_choice
 
     load_module "pm2.sh"
     local pm2_bin
@@ -493,12 +711,13 @@ show_vps_bot_submenu() {
         1) install_vps_bot ;;
         2) add_vps_bot_remote_node ;;
         3) prepare_this_server_as_worker_node ;;
-        4) manage_vps_bot_nodes_cli ;;
-        5) if [[ -n "$pm2_bin" ]] && "$pm2_bin" restart vps-bot >/dev/null 2>&1; then _frosty_ok "Restarted"; else _frosty_fail "Bot is not running under pm2 — use [1] or [8]"; fi ;;
-        6) show_vps_bot_pair_secret ;;
-        7) [[ -n "$pm2_bin" ]] && "$pm2_bin" logs vps-bot --lines 40 --nostream ;;
-        8) update_vps_bot ;;
-        9) return 0 ;;
+        4) show_vps_bot_private_menu ;;
+        5) manage_vps_bot_nodes_cli ;;
+        6) if [[ -n "$pm2_bin" ]] && "$pm2_bin" restart vps-bot >/dev/null 2>&1; then _frosty_ok "Restarted"; else _frosty_fail "Bot is not running under pm2 — use [1] or [9]"; fi ;;
+        7) show_vps_bot_pair_secret ;;
+        8) [[ -n "$pm2_bin" ]] && "$pm2_bin" logs vps-bot --lines 40 --nostream ;;
+        9) update_vps_bot ;;
+        0) return 0 ;;
     esac
     echo ""
     read -rp "  Press Enter to continue..." _
