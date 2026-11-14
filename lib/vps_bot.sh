@@ -31,7 +31,8 @@ _frosty_get_public_ip() {
 }
 
 _frosty_is_private_ip() {
-    [[ "$1" =~ ^(10\.|127\.|192\.168\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.) ]]
+    # private, loopback, link-local and CGNAT (100.64.0.0/10, e.g. Tailscale)
+    [[ "$1" =~ ^(10\.|127\.|192\.168\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.) ]]
 }
 
 _frosty_detect_bot_from_token() {
@@ -285,10 +286,10 @@ _frosty_bot_backup_and_clone() {
 
     # The repo must contain the v4 bot, otherwise the old (broken) one would be installed.
     local need
-    for need in main.py webterm.py storage.py requirements.txt terminal.html static/xterm.js; do
+    for need in main.py webterm.py storage.py docker_utils.py views.py config.py requirements.txt terminal.html static/xterm.js; do
         if [[ ! -e "${new_dir}/${need}" ]]; then
             _frosty_fail "The repository does not contain the v4 bot (missing: ${need})."
-            echo "    Upload the contents of Apex-Hosting-vps-bot-v4.zip to ${FROSTY_VPSBOT_REPO} (branch main), then retry."
+            echo "    Upload the contents of Apex-Hosting-vps-bot-v4.zip (files at the repo root) to ${FROSTY_VPSBOT_REPO} (branch main), then retry."
             rm -rf "$new_dir"
             return 1
         fi
@@ -386,11 +387,17 @@ install_vps_bot() {
     local pub_ip priv_ip default_ip node_ip
     pub_ip="$(_frosty_get_public_ip)"; priv_ip="$(_frosty_get_private_ip)"
     default_ip="${pub_ip:-$priv_ip}"
-    read -rp "  IPv4 users should SSH to for THIS node [${default_ip}]: " node_ip
+    read -rp "  IPv4 of THIS node (shown to users) [${default_ip}]: " node_ip
     node_ip="${node_ip:-$default_ip}"
+    node_ip="${node_ip//[[:space:]]/}"
 
     # Web console URL: private IP / NAT needs a reachable base URL
-    local web_url=""
+    local web_url="" ssh_mode="auto"
+    if _frosty_is_private_ip "$node_ip"; then
+        echo ""
+        echo -e "  ${C_YELLOW:-}Private IP detected (${node_ip}).${C_RESET:-} Raw SSH (ssh root@ip -p port) will be HIDDEN from users;"
+        echo "  they connect through the Web Console and SSHX only. (Change later with SSH_DISPLAY=always in .env.)"
+    fi
     if _frosty_is_private_ip "$node_ip" || [[ -z "$pub_ip" ]]; then
         echo ""
         echo -e "  ${C_YELLOW:-}Private/NAT address detected.${C_RESET:-} Web console links will only open from your LAN/VPN."
@@ -403,6 +410,7 @@ install_vps_bot() {
     _frosty_env_set MAIN_ADMIN_ID "$admin_id"
     _frosty_env_set LOCAL_NODE_NAME "$primary_node_name"
     _frosty_env_set SERVER_PUBLIC_IP "$node_ip"
+    _frosty_env_get SSH_DISPLAY >/dev/null 2>&1 && [[ -n "$(_frosty_env_get SSH_DISPLAY)" ]] || _frosty_env_set SSH_DISPLAY "$ssh_mode"
     _frosty_env_set WEB_PORT "$FROSTY_WEBSSH_PORT"
     [[ -n "$web_url" ]] && _frosty_env_set WEB_BASE_URL "$web_url"
     chmod 600 "${FROSTY_VPSBOT_DIR}/.env"
@@ -433,6 +441,7 @@ PYEOF
         _frosty_warn "Web terminal not answering yet — check logs with option [7]"
     fi
     echo "    Console links will use: $(_frosty_bot_py -c 'import config; print(config.web_base_url())' 2>/dev/null)"
+    echo "    SSH display for node IP ${node_ip}: $(_frosty_bot_py -c 'import config,sys; print("shown" if config.ssh_exposed(sys.argv[1]) else "hidden (private IP -> Web Console / SSHX only)")' "$node_ip" 2>/dev/null)"
     _frosty_ok "VPS Bot is online with node '${primary_node_name}'! Use /help in Discord (slash commands)."
     echo "    Wrong console link? In Discord run: /admin seturl https://your-tunnel-domain"
     echo "    Pairing secret for workers: run /admin webterm in Discord, or option [6] here."
