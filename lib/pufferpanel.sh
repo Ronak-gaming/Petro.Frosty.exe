@@ -229,6 +229,45 @@ uninstall_pufferpanel() {
     rm -f /etc/apt/sources.list.d/pufferpanel.sources /etc/apt/keyrings/pufferpanel.gpg
 }
 
+pufferpanel_fix_docker() {
+    echo ""
+    echo -e "${C_CYAN:-}== Fix Docker access for PufferPanel ==${C_RESET:-}"
+    if ! id pufferpanel >/dev/null 2>&1; then _frosty_fail "PufferPanel user not found — install PufferPanel first"; return 1; fi
+    if ! command -v docker >/dev/null 2>&1; then
+        _frosty_fail "Docker is not installed (Docker-based server templates need it)"; return 1
+    fi
+    getent group docker >/dev/null 2>&1 || groupadd --system docker >/dev/null 2>&1
+    usermod -aG docker pufferpanel && _frosty_ok "pufferpanel added to the docker group"
+    _frosty_puffer_has_systemd && systemctl enable --now docker >/dev/null 2>&1
+    # group membership is only read when the service starts
+    pufferpanel_restart
+    echo "    Now start your server again. If it still fails, run the Docker health check."
+}
+
+pufferpanel_diagnose() {
+    load_module "docker_health.sh"
+    docker_health_check
+    echo ""
+    echo -e "${C_CYAN:-}== Recent PufferPanel errors ==${C_RESET:-}"
+    local logs hits cause pm2_bin
+    if _frosty_puffer_has_systemd; then
+        logs="$(journalctl -u pufferpanel -n 300 --no-pager 2>/dev/null)"
+    else
+        load_module "pm2.sh"; pm2_bin="$(_frosty_pm2_bin 2>/dev/null)"
+        logs="$([[ -n "$pm2_bin" ]] && "$pm2_bin" logs pufferpanel --lines 200 --nostream 2>&1)"
+    fi
+    hits="$(grep -iE 'docker|container|failed|error' <<< "$logs" | tail -n 12)"
+    if [[ -n "$hits" ]]; then
+        echo "$hits" | cut -c1-220 | sed 's/^/    /'
+        cause="$(_frosty_docker_classify "$hits")"
+        [[ -n "$cause" ]] && echo -e "    ${C_YELLOW:-}Likely cause:${C_RESET:-} $cause"
+    else
+        echo "    (no matching log lines)"
+    fi
+    echo ""
+    echo "  Tip: Docker-based templates need working Docker. 'Native' templates run without it but need Java installed on the host."
+}
+
 show_pufferpanel_submenu() {
     clear
     print_banner
@@ -247,11 +286,13 @@ show_pufferpanel_submenu() {
     _frosty_menu_row "$C_ICE"    "[4]" "Status"
     _frosty_menu_row "$C_ICE"    "[5]" "View Logs"
     _frosty_menu_row "$C_YELLOW" "[6]" "Update"
-    _frosty_menu_row "$C_RED"    "[7]" "Uninstall"
-    _frosty_menu_row "$C_BLUE"   "[8]" "Back"
+    _frosty_menu_row "$C_CYAN"   "[7]" "Docker health check (why won't it start?)"
+    _frosty_menu_row "$C_GREEN"  "[8]" "Fix Docker access"
+    _frosty_menu_row "$C_RED"    "[9]" "Uninstall"
+    _frosty_menu_row "$C_BLUE"   "[0]" "Back"
     echo -e "${C_FROST}${C_BOLD}╚════════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-8]: " puf_choice
+    read -rp "  Select an option [0-9]: " puf_choice
 
     case "$puf_choice" in
         1) install_pufferpanel ;;
@@ -260,8 +301,10 @@ show_pufferpanel_submenu() {
         4) pufferpanel_status ;;
         5) pufferpanel_logs ;;
         6) update_pufferpanel ;;
-        7) uninstall_pufferpanel ;;
-        8) return 0 ;;
+        7) pufferpanel_diagnose ;;
+        8) pufferpanel_fix_docker ;;
+        9) uninstall_pufferpanel ;;
+        0) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 
