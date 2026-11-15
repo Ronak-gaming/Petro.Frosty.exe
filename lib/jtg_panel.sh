@@ -229,34 +229,54 @@ restart_jtg_panel() {
     fi
 }
 
+declare -F _frosty_menu_row >/dev/null 2>&1 || _frosty_menu_row() {
+    local color="$1" label="$2" text="$3" pad
+    pad=$(( 45 - ${#label} - ${#text} )); (( pad < 1 )) && pad=1
+    printf '%b\n' "${C_FROST}${C_BOLD}║${C_RESET}  ${color}${label}${C_RESET} ${C_WHITE}${text}${C_RESET}$(printf '%*s' "$pad" '')${C_FROST}${C_BOLD}║${C_RESET}"
+}
+
+# After installing: make sure the Minecraft images exist (JTG's own pull fails silently on some hosts).
+_frosty_jtg_offer_pull() {
+    load_module "docker_health.sh"
+    echo ""
+    if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+        _frosty_warn "Docker is not usable here — servers cannot start until it works (menu: Docker health check)."
+        return 0
+    fi
+    read -rp "  Pre-download the Minecraft Docker images now (avoids 'No such image' errors)? [Y/n]: " jtg_pull
+    [[ "${jtg_pull:-Y}" =~ ^[Yy] ]] && docker_pull_images
+}
+
 show_jtg_panel_submenu() {
     clear
     print_banner
-    echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}           ${C_ICE}${C_BOLD}❄  J T G   P A N E L  ❄${C_RESET}            ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Install Panel${C_RESET}                            ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}[2]${C_RESET} ${C_WHITE}Update Panel${C_RESET}                             ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[3]${C_RESET} ${C_WHITE}Create Admin User${C_RESET}                        ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_GREEN}[4]${C_RESET} ${C_WHITE}Restart Panel${C_RESET}                            ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}[5]${C_RESET} ${C_WHITE}View Logs${C_RESET}                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_RED}[6]${C_RESET} ${C_WHITE}Exit / Back to Main Menu${C_RESET}                 ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╔════════════════════════════════════════════════╗${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}$(_frosty_center "${C_ICE}${C_BOLD}❄  J T G   P A N E L  ❄${C_RESET}" 48)${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╠════════════════════════════════════════════════╣${C_RESET}"
+    _frosty_menu_row "$C_CYAN"   "[1]" "Install Panel"
+    _frosty_menu_row "$C_PURPLE" "[2]" "Update Panel"
+    _frosty_menu_row "$C_BLUE"   "[3]" "Create Admin User"
+    _frosty_menu_row "$C_GREEN"  "[4]" "Restart Panel"
+    _frosty_menu_row "$C_ICE"    "[5]" "View Logs"
+    _frosty_menu_row "$C_CYAN"   "[6]" "Pre-pull Minecraft images"
+    _frosty_menu_row "$C_YELLOW" "[7]" "Docker health check"
+    _frosty_menu_row "$C_RED"    "[8]" "Exit / Back to Main Menu"
+    echo -e "${C_FROST}${C_BOLD}╚════════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  ❄ Select an option [1-6]: " jtg_choice
+    read -rp "  ❄ Select an option [1-8]: " jtg_choice
 
     load_module "pm2.sh"
     local pm2_bin
     pm2_bin="$(_frosty_jtg_pm2_cmd)"
     case "$jtg_choice" in
-        1) install_jtg_panel ;;
+        1) install_jtg_panel && _frosty_jtg_offer_pull ;;
         2) update_jtg_panel ;;
         3) create_jtg_admin_user ;;
         4) restart_jtg_panel ;;
         5) [[ -n "$pm2_bin" ]] && "$pm2_bin" logs jtg-panel --lines 30 --nostream || _frosty_fail "pm2 not found" ;;
-        6) return 0 ;;
+        6) load_module "docker_health.sh"; docker_pull_images ;;
+        7) load_module "docker_health.sh"; docker_health_check ;;
+        8) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
     echo ""
