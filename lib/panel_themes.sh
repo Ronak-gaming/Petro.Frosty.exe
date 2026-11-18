@@ -511,9 +511,9 @@ show_extension_catalog() {
 show_extensions_submenu() {
     clear
     print_banner
-    echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}     ${C_ICE}${C_BOLD}E X T E N S I O N S   &   A D D O N S${C_RESET}      ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╔════════════════════════════════════════════════╗${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}$(_frosty_center "${C_ICE}${C_BOLD}E X T E N S I O N S   &   A D D O N S${C_RESET}" 48)${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╠════════════════════════════════════════════════╣${C_RESET}"
     _frosty_menu_row "$C_CYAN"   "[1]" "Plugin Installer (Modrinth, free)"
     _frosty_menu_row "$C_PURPLE" "[2]" "Install extension from URL (.blueprint)"
     _frosty_menu_row "$C_PURPLE" "[3]" "Install extension from file (.blueprint)"
@@ -521,7 +521,7 @@ show_extensions_submenu() {
     _frosty_menu_row "$C_RED"    "[5]" "Remove an extension"
     _frosty_menu_row "$C_YELLOW" "[6]" "Catalog: where to get other addons"
     _frosty_menu_row "$C_BLUE"   "[7]" "Back"
-    echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╚════════════════════════════════════════════════╝${C_RESET}"
     echo ""
     read -rp "  Select an option [1-7]: " ext_choice
 
@@ -544,9 +544,9 @@ show_extensions_submenu() {
 show_themes_submenu() {
     clear
     print_banner
-    echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}   ${C_ICE}${C_BOLD}❄  T H E M E S  &  E X T E N S I O N S  ❄${C_RESET}  ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╔════════════════════════════════════════════════╗${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}$(_frosty_center "${C_ICE}${C_BOLD}❄  T H E M E S  &  E X T E N S I O N S  ❄${C_RESET}" 48)${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╠════════════════════════════════════════════════╣${C_RESET}"
     if blueprint_installed; then
         _frosty_menu_row "$C_GREEN" "Blueprint:" "installed"
     else
@@ -561,7 +561,7 @@ show_themes_submenu() {
     _frosty_menu_row "$C_PURPLE" "[7]" "NEOBRUTALIS (full overlay, rebuilds)"
     _frosty_menu_row "$C_CYAN"   "[8]" "Extensions & Addons >"
     _frosty_menu_row "$C_BLUE"   "[9]" "Back"
-    echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╚════════════════════════════════════════════════╝${C_RESET}"
     echo ""
     read -rp "  Select an option [1-9]: " theme_choice
 
