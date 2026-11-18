@@ -26,6 +26,26 @@ FROSTY_PHP_REQUIRED_EXT=(
     json mbstring pdo pdo_mysql posix zip curl gd xml bcmath tokenizer intl
 )
 
+# Remove ondrej PPA sources (a stale one for an unsupported release breaks every `apt-get update`).
+_frosty_cleanup_ondrej_ppa() {
+    rm -f /etc/apt/sources.list.d/*ondrej*php* 2>/dev/null
+    grep -l "ppa.launchpadcontent.net/ondrej/php" /etc/apt/sources.list.d/* 2>/dev/null | xargs -r rm -f
+}
+
+# packages.sury.org/php — the canonical PHP source for Ubuntu 26.04+ (deb822 source + binary keyring).
+_frosty_add_sury_repo() {
+    local codename="$1"
+    [[ -z "$codename" ]] && { echo "could not detect the Ubuntu codename" >>/tmp/frosty_php_ppa.log; return 1; }
+    mkdir -p /usr/share/keyrings /etc/apt/sources.list.d
+    if ! curl -fsSL --retry 2 -m 30 https://packages.sury.org/php/apt.gpg -o /usr/share/keyrings/deb.sury.org-php.gpg >>/tmp/frosty_php_ppa.log 2>&1; then
+        return 1
+    fi
+    chmod 644 /usr/share/keyrings/deb.sury.org-php.gpg
+    rm -f /etc/apt/trusted.gpg.d/php.gpg /etc/apt/sources.list.d/php.list
+    printf 'Types: deb\nURIs: https://packages.sury.org/php/\nSuites: %s\nComponents: main\nSigned-By: /usr/share/keyrings/deb.sury.org-php.gpg\n' \
+        "$codename" > /etc/apt/sources.list.d/sury-php.sources
+}
+
 _frosty_add_php_ppa() {
     echo "    Adding PHP repository..."
 
@@ -52,16 +72,31 @@ _frosty_add_php_ppa() {
             fi
         fi
     else
-        if grep -rq "ondrej/php" /etc/apt/sources.list.d/ 2>/dev/null; then
-            _frosty_ok "PHP PPA already added (Ubuntu)"
-            return 0
-        fi
+        # Ubuntu: the ondrej PPA only serves older releases (jammy/noble). Newer ones (e.g. 26.04 "resolute")
+        # have NO Release file there and are served from packages.sury.org instead.
+        local codename="${FROSTY_OS_CODENAME:-}"
+        [[ -z "$codename" && -f /etc/os-release ]] && codename="$(. /etc/os-release && echo "${VERSION_CODENAME:-}")"
+        [[ -z "$codename" ]] && codename="$(lsb_release -sc 2>/dev/null)"
 
-        if LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php >>/tmp/frosty_php_ppa.log 2>&1; then
-            _frosty_ok "PHP PPA added (Ubuntu)"
+        if curl -fsI -m 15 "https://ppa.launchpadcontent.net/ondrej/php/ubuntu/dists/${codename}/Release" >/dev/null 2>&1; then
+            if grep -rq "ondrej/php" /etc/apt/sources.list.d/ 2>/dev/null; then
+                _frosty_ok "PHP PPA already added (Ubuntu ${codename})"
+                return 0
+            fi
+            if LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php >>/tmp/frosty_php_ppa.log 2>&1; then
+                _frosty_ok "PHP PPA added (Ubuntu ${codename})"
+            else
+                _frosty_fail "Failed to add PHP PPA — see /tmp/frosty_php_ppa.log"
+                return 1
+            fi
         else
-            _frosty_fail "Failed to add PHP PPA — see /tmp/frosty_php_ppa.log"
-            return 1
+            echo "    The ondrej PPA has no packages for Ubuntu ${codename} — using packages.sury.org instead..."
+            _frosty_cleanup_ondrej_ppa
+            if ! _frosty_add_sury_repo "$codename"; then
+                _frosty_fail "Failed to add the Sury PHP repository — see /tmp/frosty_php_ppa.log"
+                return 1
+            fi
+            _frosty_ok "Sury PHP repository added (Ubuntu ${codename})"
         fi
     fi
 
