@@ -30,6 +30,18 @@ _frosty_apt_update_once() {
         if DEBIAN_FRONTEND=noninteractive apt-get update -y >/tmp/frosty_apt_update.log 2>&1; then
             _frosty_apt_updated=1
         else
+            # A leftover ondrej PHP PPA for a release it does not support (e.g. Ubuntu 26.04) breaks every
+            # apt update. Remove it (the PHP step re-adds the right repository) and retry once.
+            if grep -q "ppa.launchpadcontent.net/ondrej/php" /tmp/frosty_apt_update.log 2>/dev/null \
+               && grep -q "does not have a Release file" /tmp/frosty_apt_update.log 2>/dev/null; then
+                _frosty_warn "Stale ondrej PHP PPA (no packages for this Ubuntu release) — removing it and retrying"
+                rm -f /etc/apt/sources.list.d/*ondrej*php* 2>/dev/null
+                grep -l "ppa.launchpadcontent.net/ondrej/php" /etc/apt/sources.list.d/* 2>/dev/null | xargs -r rm -f
+                if DEBIAN_FRONTEND=noninteractive apt-get update -y >/tmp/frosty_apt_update.log 2>&1; then
+                    _frosty_apt_updated=1
+                    return 0
+                fi
+            fi
             _frosty_fail "apt-get update failed — see /tmp/frosty_apt_update.log"
             return 1
         fi
