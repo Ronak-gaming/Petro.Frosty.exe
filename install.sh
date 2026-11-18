@@ -26,6 +26,30 @@ C_RED='\e[38;5;196m'
 C_WHITE='\e[38;5;255m'
 
 # ---- Load lib modules (works locally, in /opt/frosty, and via curl|bash) ----
+# Each module must define at least this function. Catches a wrongly uploaded / truncated file
+# (e.g. lib/php.sh that actually contains another module) with a clear message instead of "command not found".
+declare -A FROSTY_MODULE_MARKERS=(
+    [php.sh]=install_php
+    [database.sh]=install_database
+    [docker.sh]=install_docker
+    [wings.sh]=install_wings
+    [pufferpanel.sh]=run_pufferpanel_flow
+    [jtg_panel.sh]=run_jtg_panel_flow
+    [vps_bot.sh]=run_vps_bot_flow
+    [panel_themes.sh]=run_themes_flow
+    [docker_health.sh]=docker_health_check
+)
+
+_frosty_verify_module() {
+    local name="$1" fn="${FROSTY_MODULE_MARKERS[$1]:-}"
+    [[ -z "$fn" ]] && return 0
+    declare -F "$fn" >/dev/null 2>&1 && return 0
+    echo -e "${C_RED}[✗] lib/${name} loaded, but it does not contain '${fn}'.${C_RESET}"
+    echo -e "${C_YELLOW}    The file in your GitHub repo has the wrong content (a copy of another file or an incomplete upload).${C_RESET}"
+    echo -e "${C_YELLOW}    Re-upload the correct lib/${name} and try again.${C_RESET}"
+    return 1
+}
+
 load_module() {
     local name="$1"
     if [[ -f "${FROSTY_SCRIPT_DIR}/lib/${name}" ]]; then
@@ -47,6 +71,7 @@ load_module() {
             return 1
         fi
     fi
+    _frosty_verify_module "$name"
 }
 
 # ---- UI helpers ----
