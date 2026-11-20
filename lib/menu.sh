@@ -192,21 +192,26 @@ show_main_menu() {
     done
 }
 
+# Boxed sub-screens in the same style as the main screen (48 inner columns, centred title).
+_frosty_box_top() {   # $1 = title (colour escapes allowed)
+    echo -e "${C_FROST}${C_BOLD}╔════════════════════════════════════════════════╗${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}$(_frosty_center "${C_ICE}${C_BOLD}$1${C_RESET}" 48)${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╠════════════════════════════════════════════════╣${C_RESET}"
+}
+_frosty_box_bottom() {
+    echo -e "${C_FROST}${C_BOLD}╚════════════════════════════════════════════════╝${C_RESET}"
+}
+
 show_vps_type_menu() {
     clear
     print_banner
-    echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}      ${C_ICE}${C_BOLD}🧊 V P S   I N S T A L L E R 🧊${C_RESET}       ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}❯ [1]${C_RESET} ${C_WHITE}KVM VPS${C_RESET}      ${C_ICE}(real VM, faster)${C_RESET}         ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}❯ [2]${C_RESET} ${C_WHITE}Docker VPS${C_RESET}   ${C_ICE}(no KVM needed)${C_RESET}           ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}❯ [3]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                      ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
+    _frosty_box_top "V P S   I N S T A L L E R"
+    _frosty_menu_row "$C_CYAN"   "❯ [1]" "KVM VPS (real VM, faster)"
+    _frosty_menu_row "$C_PURPLE" "❯ [2]" "Docker VPS (no KVM needed)"
+    _frosty_menu_row "$C_BLUE"   "❯ [3]" "Back to Main Menu"
+    _frosty_box_bottom
     echo ""
     read -erp "  ❄ Select an option [1-3]: " vt_choice
-
     case "$vt_choice" in
         1) load_module "vps.sh"; show_vps_kvm_menu ;;
         2) load_module "vps_docker.sh"; show_vps_docker_menu ;;
@@ -218,17 +223,12 @@ show_vps_type_menu() {
 show_hypervisor_menu() {
     clear
     print_banner
-    echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}          ${C_ICE}${C_BOLD}❄  H Y P E R V I S O R  ❄${C_RESET}           ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}[1]${C_RESET} ${C_WHITE}Proxmox VE${C_RESET}                               ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}[2]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                        ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
+    _frosty_box_top "H Y P E R V I S O R"
+    _frosty_menu_row "$C_CYAN" "❯ [1]" "Proxmox VE"
+    _frosty_menu_row "$C_BLUE" "❯ [2]" "Back to Main Menu"
+    _frosty_box_bottom
     echo ""
     read -erp "  ❄ Select an option [1-2]: " hv_choice
-
     case "$hv_choice" in
         1) show_proxmox_menu ;;
         2) return 0 ;;
@@ -239,20 +239,15 @@ show_hypervisor_menu() {
 show_panels_menu() {
     clear
     print_banner
-    echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}     ${C_ICE}${C_BOLD}🧊 P A N E L S   &   V P S   B O T 🧊${C_RESET}     ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}❯ [1]${C_RESET} ${C_WHITE}Petro (Pterodactyl)${C_RESET}                    ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}❯ [2]${C_RESET} ${C_WHITE}JTG Panel${C_RESET}                              ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}❯ [3]${C_RESET} ${C_WHITE}VPS Bot${C_RESET}                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_GREEN}❯ [4]${C_RESET} ${C_WHITE}PufferPanel${C_RESET}                            ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}❯ [5]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                      ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
+    _frosty_box_top "P A N E L S   &   V P S   B O T"
+    _frosty_menu_row "$C_CYAN"   "❯ [1]" "Petro (Pterodactyl)"
+    _frosty_menu_row "$C_PURPLE" "❯ [2]" "JTG Panel"
+    _frosty_menu_row "$C_ICE"    "❯ [3]" "VPS Bot"
+    _frosty_menu_row "$C_GREEN"  "❯ [4]" "PufferPanel"
+    _frosty_menu_row "$C_BLUE"   "❯ [5]" "Back to Main Menu"
+    _frosty_box_bottom
     echo ""
     read -erp "  ❄ Select an option [1-5]: " panels_choice
-
     case "$panels_choice" in
         1) show_pterodactyl_menu ;;
         2) load_module "jtg_panel.sh"; run_jtg_panel_flow ;;
@@ -266,19 +261,14 @@ show_panels_menu() {
 show_pterodactyl_menu() {
     clear
     print_banner
-    echo -e "${C_FROST}${C_BOLD}╔══════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}              ${C_ICE}${C_BOLD}🧊 P E T R O 🧊${C_RESET}                 ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}╠══════════════════════════════════════════════╣${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_CYAN}❯ [1]${C_RESET} ${C_WHITE}Panel${C_RESET}                                  ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_PURPLE}❯ [2]${C_RESET} ${C_WHITE}Wings${C_RESET}                                  ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_ICE}❯ [3]${C_RESET} ${C_WHITE}Themes & Extensions${C_RESET}                    ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}  ${C_BLUE}❯ [4]${C_RESET} ${C_WHITE}Back to Main Menu${C_RESET}                      ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}                                                ${C_FROST}${C_BOLD}║${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}╚══════════════════════════════════════════════╝${C_RESET}"
+    _frosty_box_top "P E T R O"
+    _frosty_menu_row "$C_CYAN"   "❯ [1]" "Panel"
+    _frosty_menu_row "$C_PURPLE" "❯ [2]" "Wings"
+    _frosty_menu_row "$C_ICE"    "❯ [3]" "Themes & Extensions"
+    _frosty_menu_row "$C_BLUE"   "❯ [4]" "Back to Main Menu"
+    _frosty_box_bottom
     echo ""
     read -erp "  ❄ Select an option [1-4]: " pty_choice
-
     case "$pty_choice" in
         1) run_panel_flow ;;
         2) run_wings_flow ;;
