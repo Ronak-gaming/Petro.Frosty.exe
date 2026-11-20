@@ -9,6 +9,12 @@ set -uo pipefail
 # Ensure /usr/local/bin and sbin directories are ALWAYS on PATH
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 
+# Box drawing / alignment counts characters, so force a UTF-8 locale when the server uses plain C/POSIX.
+case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+    *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) ;;
+    *) export LC_ALL=C.UTF-8 ;;
+esac
+
 FROSTY_RAW_BASE="https://raw.githubusercontent.com/Ronak-gaming/Petro.Frosty.exe/main"
 FROSTY_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-.}")" 2>/dev/null && pwd || pwd)"
 
