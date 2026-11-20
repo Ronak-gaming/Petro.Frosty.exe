@@ -4,6 +4,8 @@ set -uo pipefail
 FROSTY_BLUEPRINT_RC="${FROSTY_PANEL_DIR:-/var/www/pterodactyl}/.blueprintrc"
 FROSTY_BLUEPRINT_BIN="/usr/local/bin/blueprint"
 
+FROSTY_PRIVATE_DIR="${FROSTY_PRIVATE_DIR:-/opt/frosty-private}"
+
 _frosty_blueprint_cmd() {
     if [[ -f "$FROSTY_BLUEPRINT_BIN" ]]; then
         chmod +x "$FROSTY_BLUEPRINT_BIN" 2>/dev/null
@@ -73,12 +75,24 @@ install_blueprint() {
     fi
     _frosty_ok "Panel JS dependencies installed"
 
-    echo "    Downloading Blueprint..."
     rm -f "${panel_dir}/release.zip"
-    local latest_url="https://github.com/BlueprintFramework/framework/releases/latest/download/release.zip"
-    if ! timeout 120 curl -fL -o "${panel_dir}/release.zip" "$latest_url" >/tmp/frosty_blueprint_download.log 2>&1; then
-        _frosty_fail "Blueprint download failed (HTTP error or timeout) — see /tmp/frosty_blueprint_download.log"
-        return 1
+    # A local Blueprint release.zip wins over the download: lets you pin the exact version (e.g. the one your
+    # purchased theme was tested with) and works offline. Looked up as blueprint-release.zip / release.zip.
+    local local_zip="" d
+    for d in "${FROSTY_BLUEPRINT_ZIP:-}" "${FROSTY_PRIVATE_DIR:-/opt/frosty-private}/blueprint-release.zip" \
+             "${FROSTY_PRIVATE_DIR:-/opt/frosty-private}/release.zip" /root/blueprint-release.zip; do
+        [[ -n "$d" && -f "$d" ]] && unzip -l "$d" 2>/dev/null | grep -q " blueprint.sh$" && { local_zip="$d"; break; }
+    done
+    if [[ -n "$local_zip" ]]; then
+        echo "    Using your local Blueprint release: ${local_zip}"
+        cp -f "$local_zip" "${panel_dir}/release.zip"
+    else
+        echo "    Downloading Blueprint (latest official release)..."
+        local latest_url="https://github.com/BlueprintFramework/framework/releases/latest/download/release.zip"
+        if ! timeout 120 curl -fL -o "${panel_dir}/release.zip" "$latest_url" >/tmp/frosty_blueprint_download.log 2>&1; then
+            _frosty_fail "Blueprint download failed (HTTP error or timeout) — see /tmp/frosty_blueprint_download.log"
+            return 1
+        fi
     fi
 
     if ! unzip -t "${panel_dir}/release.zip" >/tmp/frosty_blueprint_verify.log 2>&1; then
@@ -266,6 +280,18 @@ _frosty_bp_install_file() {
     if ! unzip -tq "$src" >/dev/null 2>&1; then
         _frosty_fail "Not a valid .blueprint file (it must be a zip archive)"
         return 1
+    fi
+
+    # Show what is being installed and warn when it was built for another Blueprint version.
+    local conf pkg_name pkg_ver pkg_target cur_ver
+    conf="$(unzip -p "$src" conf.yml 2>/dev/null)"
+    pkg_name="$(grep -m1 -E '^[[:space:]]+name:' <<< "$conf" | sed 's/.*name:[[:space:]]*//; s/"//g')"
+    pkg_ver="$(grep -m1 -E '^[[:space:]]+version:' <<< "$conf" | sed 's/.*version:[[:space:]]*//; s/"//g')"
+    pkg_target="$(grep -m1 -E '^[[:space:]]+target:' <<< "$conf" | sed 's/.*target:[[:space:]]*//; s/"//g')"
+    cur_ver="$("$bp_bin" -v 2>/dev/null | grep -oE '(beta|alpha)-[0-9]{4}-[0-9]{2}|[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
+    [[ -n "$pkg_name" ]] && echo "    Package: ${pkg_name} ${pkg_ver}  (built for Blueprint ${pkg_target:-?}; installed: ${cur_ver:-?})"
+    if [[ -n "$pkg_target" && -n "$cur_ver" && "$pkg_target" != "$cur_ver" ]]; then
+        _frosty_warn "This package targets Blueprint '${pkg_target}' but '${cur_ver}' is installed — it may not work (ask the author for a matching build)."
     fi
 
     cp -f "$src" "${panel_dir}/${id}.blueprint"
@@ -487,24 +513,74 @@ install_neobrutalis_theme() {
     echo "    Roll back any time: tar -xzf ${backup} -C $(dirname "$panel_dir")"
 }
 
+# ── Paid products: the .blueprint file comes from YOUR purchase and is never bundled in the (public) installer ──
+FROSTY_PRIVATE_DIR="${FROSTY_PRIVATE_DIR:-/opt/frosty-private}"
+
+_frosty_find_purchased() {   # $1 = file name -> prints the first match
+    local file="$1" d
+    for d in "$FROSTY_PRIVATE_DIR" /root /opt/frosty/private "$PWD" "$(_frosty_panel_dir)/.frosty-private"; do
+        [[ -f "${d}/${file}" ]] && { echo "${d}/${file}"; return 0; }
+    done
+    return 1
+}
+
+# $1 = display name, $2 = identifier, $3 = file name
+install_purchased_extension() {
+    local display="$1" id="$2" file="$3" found tmp=""
+    echo ""
+    echo -e "${C_CYAN:-}== Installing ${display} (purchased) ==${C_RESET:-}"
+    _frosty_bp_ready || return 1
+
+    if found="$(_frosty_find_purchased "$file")"; then
+        _frosty_ok "Found your file: ${found}"
+    elif [[ -n "${FROSTY_PRIVATE_BASE_URL:-}" ]] && tmp="$(mktemp /tmp/frosty_bp_dl_XXXXXX)" \
+         && timeout 180 curl -fL --retry 2 -o "$tmp" "${FROSTY_PRIVATE_BASE_URL%/}/${file}" >"/tmp/frosty_bp_${id}_download.log" 2>&1; then
+        found="$tmp"
+        _frosty_ok "Downloaded ${file} from your private location"
+    else
+        [[ -n "$tmp" ]] && { rm -f "$tmp"; tmp=""; }
+        _frosty_warn "${display} is a paid product — its .blueprint file is not part of this installer."
+        echo "    Put the file you purchased at: ${FROSTY_PRIVATE_DIR}/${file}"
+        echo "    (or enter a path / private https link now)."
+        local src
+        read -rp "  Path or https URL for ${file} [Enter = cancel]: " src
+        src="${src//[[:space:]]/}"; src="${src/#\~/$HOME}"
+        [[ -z "$src" ]] && { echo "Cancelled."; return 1; }
+        if [[ "$src" =~ ^https:// ]]; then
+            tmp="$(mktemp /tmp/frosty_bp_dl_XXXXXX)"
+            if ! timeout 180 curl -fL --retry 2 -o "$tmp" "$src" >"/tmp/frosty_bp_${id}_download.log" 2>&1; then
+                rm -f "$tmp"; _frosty_fail "Download failed — see /tmp/frosty_bp_${id}_download.log"; return 1
+            fi
+            found="$tmp"
+        else
+            found="$src"
+        fi
+    fi
+    _frosty_bp_install_file "$found" "$id"
+    local rc=$?
+    [[ -n "$tmp" ]] && rm -f "$tmp"
+    return $rc
+}
+
+install_nebula_theme()       { install_purchased_extension "Nebula (theme)" "nebula" "nebula.blueprint"; }
+install_modpack_installer()  { install_purchased_extension "Saga Minecraft Modpack Installer" "sagaminecraftmodpackinstaller" "sagaminecraftmodpackinstaller.blueprint"; }
+install_subdomain_manager()  { install_purchased_extension "Subdomain Manager" "subdomainmanager" "subdomainmanager.blueprint"; }
+
 show_extension_catalog() {
     echo ""
-    echo -e "${C_CYAN:-}== Extensions & Addons — where to get them ==${C_RESET:-}"
-    echo -e "${C_GREEN:-}  One-click here (free, verified source):${C_RESET:-}"
-    echo "    Plugin Installer ........ Modrinth Browser   (Extensions menu [1])"
-    echo "    Themes .................. NookTheme, Darkenate, Abyss Purple, Recolor, NEOBRUTALIS"
+    echo -e "${C_CYAN:-}== Themes & Extensions — what is available ==${C_RESET:-}"
+    echo -e "${C_GREEN:-}  Free, one-click (downloaded from their official GitHub):${C_RESET:-}"
+    echo "    Themes ...... NookTheme, Darkenate, Abyss Purple, Recolor, NEOBRUTALIS"
+    echo "    Extensions .. Modrinth Browser (plugin installer)"
     echo ""
-    echo -e "${C_YELLOW:-}  Not bundled (paid or no stable free release found):${C_RESET:-}"
-    echo "    Subdomain Manager, Modpack Installer, Nebula, Noobee, IceMinecraftTheme, ..."
-    echo "    -> buy/download from the creator (BuiltByBit / blueprint.zip / their GitHub)."
-    echo "    -> if you get a .blueprint file: Extensions menu -> Install from file (or URL)."
-    echo "    -> if it is a zip/tar overlay, follow the creator's own instructions."
+    echo -e "${C_YELLOW:-}  Purchased (you supply the .blueprint file — never bundled here):${C_RESET:-}"
+    echo "    Theme ....... Nebula                       -> nebula.blueprint"
+    echo "    Extensions .. Saga Minecraft Modpack Inst. -> sagaminecraftmodpackinstaller.blueprint"
+    echo "                  Subdomain Manager            -> subdomainmanager.blueprint"
+    echo "    Save the files in ${FROSTY_PRIVATE_DIR}/ (or /root) and use the menu entry, or give a path/link when asked."
+    echo "    Optional: set FROSTY_PRIVATE_BASE_URL=https://your-private-host/path and the files are fetched automatically."
     echo ""
-    echo "  Also useful categories (search blueprint.zip/browse):"
-    echo "    Server Importer, Advanced Backups, Server Expiry, Announcements, Discord Alerts,"
-    echo "    Audit Logs, Monitoring, Database tools, Player Manager, Server Notes,"
-    echo "    Custom Buttons, Auto-Sleep."
-    echo ""
+    echo "  Anything else: get a .blueprint file and use Install from URL / file."
     echo "  Always back up the panel before installing paid/unknown addons."
 }
 
@@ -512,27 +588,31 @@ show_extensions_submenu() {
     clear
     print_banner
     echo -e "${C_FROST}${C_BOLD}╔════════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}$(_frosty_center "${C_ICE}${C_BOLD}E X T E N S I O N S   &   A D D O N S${C_RESET}" 48)${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}$(_frosty_center "${C_ICE}${C_BOLD}E X T E N S I O N S${C_RESET}" 48)${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╠════════════════════════════════════════════════╣${C_RESET}"
     _frosty_menu_row "$C_CYAN"   "[1]" "Plugin Installer (Modrinth, free)"
-    _frosty_menu_row "$C_PURPLE" "[2]" "Install extension from URL (.blueprint)"
-    _frosty_menu_row "$C_PURPLE" "[3]" "Install extension from file (.blueprint)"
-    _frosty_menu_row "$C_ICE"    "[4]" "List installed extensions"
-    _frosty_menu_row "$C_RED"    "[5]" "Remove an extension"
-    _frosty_menu_row "$C_YELLOW" "[6]" "Catalog: where to get other addons"
-    _frosty_menu_row "$C_BLUE"   "[7]" "Back"
+    _frosty_menu_row "$C_GREEN"  "[2]" "Modpack Installer (Saga, purchased)"
+    _frosty_menu_row "$C_GREEN"  "[3]" "Subdomain Manager (purchased)"
+    _frosty_menu_row "$C_PURPLE" "[4]" "Install from URL (.blueprint)"
+    _frosty_menu_row "$C_PURPLE" "[5]" "Install from file (.blueprint)"
+    _frosty_menu_row "$C_ICE"    "[6]" "List installed extensions"
+    _frosty_menu_row "$C_RED"    "[7]" "Remove an extension"
+    _frosty_menu_row "$C_YELLOW" "[8]" "Catalog / where to get files"
+    _frosty_menu_row "$C_BLUE"   "[9]" "Back"
     echo -e "${C_FROST}${C_BOLD}╚════════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-7]: " ext_choice
+    read -rp "  Select an option [1-9]: " ext_choice
 
     case "$ext_choice" in
         1) install_modrinth_plugin_installer ;;
-        2) install_blueprint_from_url ;;
-        3) install_blueprint_from_file ;;
-        4) list_blueprint_extensions ;;
-        5) remove_blueprint_extension ;;
-        6) show_extension_catalog ;;
-        7) return 0 ;;
+        2) install_modpack_installer ;;
+        3) install_subdomain_manager ;;
+        4) install_blueprint_from_url ;;
+        5) install_blueprint_from_file ;;
+        6) list_blueprint_extensions ;;
+        7) remove_blueprint_extension ;;
+        8) show_extension_catalog ;;
+        9) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 
@@ -541,11 +621,47 @@ show_extensions_submenu() {
     show_extensions_submenu
 }
 
+show_themes_only_submenu() {
+    clear
+    print_banner
+    echo -e "${C_FROST}${C_BOLD}╔════════════════════════════════════════════════╗${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}$(_frosty_center "${C_ICE}${C_BOLD}T H E M E S${C_RESET}" 48)${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}╠════════════════════════════════════════════════╣${C_RESET}"
+    _frosty_menu_row "$C_PURPLE" "[1]" "NookTheme (sidebar theme)"
+    _frosty_menu_row "$C_PURPLE" "[2]" "Darkenate (dark, Blueprint)"
+    _frosty_menu_row "$C_PURPLE" "[3]" "Abyss Purple (dark/purple)"
+    _frosty_menu_row "$C_PURPLE" "[4]" "Recolor (colour scheme)"
+    _frosty_menu_row "$C_PURPLE" "[5]" "NEOBRUTALIS (full overlay)"
+    _frosty_menu_row "$C_GREEN"  "[6]" "Nebula (purchased)"
+    _frosty_menu_row "$C_CYAN"   "[7]" "Install theme from file (.blueprint)"
+    _frosty_menu_row "$C_BLUE"   "[8]" "Back"
+    echo -e "${C_FROST}${C_BOLD}╚════════════════════════════════════════════════╝${C_RESET}"
+    echo ""
+    read -rp "  Select an option [1-8]: " theme_choice
+
+    case "$theme_choice" in
+        1) install_nook_theme ;;
+        2) install_darkenate_theme ;;
+        3) install_abyss_purple_theme ;;
+        4) install_recolor_theme ;;
+        5) install_neobrutalis_theme ;;
+        6) install_nebula_theme ;;
+        7) install_blueprint_from_file ;;
+        8) return 0 ;;
+        *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
+    esac
+
+    echo ""
+    read -rp "  Press Enter to continue..." _
+    show_themes_only_submenu
+}
+
+# Hub: Blueprint framework + the separate Themes and Extensions menus
 show_themes_submenu() {
     clear
     print_banner
     echo -e "${C_FROST}${C_BOLD}╔════════════════════════════════════════════════╗${C_RESET}"
-    echo -e "${C_FROST}${C_BOLD}║${C_RESET}$(_frosty_center "${C_ICE}${C_BOLD}❄  T H E M E S  &  E X T E N S I O N S  ❄${C_RESET}" 48)${C_FROST}${C_BOLD}║${C_RESET}"
+    echo -e "${C_FROST}${C_BOLD}║${C_RESET}$(_frosty_center "${C_ICE}${C_BOLD}T H E M E S  &  E X T E N S I O N S${C_RESET}" 48)${C_FROST}${C_BOLD}║${C_RESET}"
     echo -e "${C_FROST}${C_BOLD}╠════════════════════════════════════════════════╣${C_RESET}"
     if blueprint_installed; then
         _frosty_menu_row "$C_GREEN" "Blueprint:" "installed"
@@ -554,27 +670,19 @@ show_themes_submenu() {
     fi
     _frosty_menu_row "$C_CYAN"   "[1]" "Install Blueprint Framework"
     _frosty_menu_row "$C_RED"    "[2]" "Uninstall Blueprint Framework"
-    _frosty_menu_row "$C_PURPLE" "[3]" "NookTheme (sidebar theme)"
-    _frosty_menu_row "$C_PURPLE" "[4]" "Darkenate (dark, Blueprint)"
-    _frosty_menu_row "$C_PURPLE" "[5]" "Abyss Purple (dark/purple, Blueprint)"
-    _frosty_menu_row "$C_PURPLE" "[6]" "Recolor (dark, Blueprint)"
-    _frosty_menu_row "$C_PURPLE" "[7]" "NEOBRUTALIS (full overlay, rebuilds)"
-    _frosty_menu_row "$C_CYAN"   "[8]" "Extensions & Addons >"
-    _frosty_menu_row "$C_BLUE"   "[9]" "Back"
+    _frosty_menu_row "$C_PURPLE" "[3]" "Themes >"
+    _frosty_menu_row "$C_GREEN"  "[4]" "Extensions >"
+    _frosty_menu_row "$C_BLUE"   "[5]" "Back"
     echo -e "${C_FROST}${C_BOLD}╚════════════════════════════════════════════════╝${C_RESET}"
     echo ""
-    read -rp "  Select an option [1-9]: " theme_choice
+    read -rp "  Select an option [1-5]: " hub_choice
 
-    case "$theme_choice" in
+    case "$hub_choice" in
         1) install_blueprint ;;
         2) uninstall_blueprint ;;
-        3) install_nook_theme ;;
-        4) install_darkenate_theme ;;
-        5) install_abyss_purple_theme ;;
-        6) install_recolor_theme ;;
-        7) install_neobrutalis_theme ;;
-        8) show_extensions_submenu; show_themes_submenu; return 0 ;;
-        9) return 0 ;;
+        3) show_themes_only_submenu; show_themes_submenu; return 0 ;;
+        4) show_extensions_submenu; show_themes_submenu; return 0 ;;
+        5) return 0 ;;
         *) echo -e "${C_RED}Invalid option.${C_RESET}"; sleep 1 ;;
     esac
 
